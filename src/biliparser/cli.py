@@ -94,7 +94,7 @@ def run(args: argparse.Namespace) -> int:
         output = f"# {title} {page_tag}\n\n```\n{transcript}\n```\n"
         print(transcript)
     else:
-        print(f"→ GLM（{cfg.glm_model}）总结中 …", flush=True)
+        print(f"→ AI（{cfg.glm_model}）总结中 …", flush=True)
         summary = summarizer.summarize(transcript, title, cfg)
         output = (
             f"# {title} {page_tag}\n\n"

@@ -1,4 +1,4 @@
-"""GLM（OpenAI 兼容接口）视频总结。"""
+"""AI（OpenAI 兼容接口）视频总结。"""
 
 import time
 
@@ -47,21 +47,21 @@ def _chat(cfg, messages: list[dict]) -> str:
         try:
             resp = httpx.post(url, json=body, headers=headers, timeout=180)
         except httpx.HTTPError as e:
-            raise SummarizeError(f"请求 GLM 接口失败：{e.__class__.__name__}") from e
+            raise SummarizeError(f"请求 AI 接口失败：{e.__class__.__name__}") from e
         if resp.status_code == 429 and attempt == 1:
             time.sleep(2)
             continue
         if resp.status_code == 401:
             raise SummarizeError(
-                "GLM API Key 无效（HTTP 401）", hint="请检查配置中的 glm.api_key"
+                "API Key 无效（HTTP 401）", hint="请检查配置中的 glm.api_key"
             )
         if resp.status_code != 200:
-            raise SummarizeError(f"GLM 接口返回 HTTP {resp.status_code}：{resp.text[:200]}")
+            raise SummarizeError(f"AI 接口返回 HTTP {resp.status_code}：{resp.text[:200]}")
         try:
             return resp.json()["choices"][0]["message"]["content"]
         except (KeyError, IndexError, ValueError) as e:
-            raise SummarizeError(f"GLM 返回格式异常：{resp.text[:200]}") from e
-    raise SummarizeError("GLM 接口限流（HTTP 429）", hint="请稍后重试")
+            raise SummarizeError(f"AI 返回格式异常：{resp.text[:200]}") from e
+    raise SummarizeError("AI 接口限流（HTTP 429）", hint="请稍后重试")
 
 
 def _split_transcript(transcript: str) -> list[str]:
