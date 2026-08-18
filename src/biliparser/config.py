@@ -1,6 +1,7 @@
 """配置加载：~/.biliparser/config.toml，环境变量优先覆盖。"""
 
 import os
+import re
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -76,6 +77,19 @@ def load_config(require: tuple[str, ...] = ()) -> Config:
         cfg.glm_model = os.environ["BILIPARSER_MODEL"]
     if os.environ.get("BILIPARSER_BASE_URL"):
         cfg.glm_base_url = os.environ["BILIPARSER_BASE_URL"]
+
+    # 未配置 GLM key 时，自动复用环境里的智谱 Coding Plan 凭证
+    # （即 Claude Code 经 ANTHROPIC_BASE_URL/ANTHROPIC_AUTH_TOKEN 走的那套，
+    # 与 paas/v4 的 API 资源包是两个计费池）。只填空位，不覆盖上面的显式配置。
+    if not cfg.glm_api_key:
+        token = os.environ.get("ANTHROPIC_AUTH_TOKEN") or os.environ.get("ANTHROPIC_API_KEY")
+        base = os.environ.get("ANTHROPIC_BASE_URL", "")
+        if token and "bigmodel.cn" in base:
+            cfg.glm_api_key = token
+            cfg.glm_base_url = base.rstrip("/")
+            if os.environ.get("ANTHROPIC_MODEL"):
+                # 形如 glm-5.2[1M] 的上下文长度后缀去掉
+                cfg.glm_model = re.sub(r"\[[^\]]*\]$", "", os.environ["ANTHROPIC_MODEL"])
 
     missing = [f for f in require if not getattr(cfg, f)]
     if missing:

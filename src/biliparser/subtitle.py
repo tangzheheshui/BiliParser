@@ -1,7 +1,7 @@
 """字幕选择与文本拼装。"""
 
-# 语言优先级：UP 上传的中文字幕（zh-CN/zh-Hans）> AI 中文字幕（ai_zh）
-_PRIORITY = ["zh-CN", "zh-Hans", "ai_zh"]
+# 语言优先级：UP 上传的中文字幕（zh-CN/zh-Hans）> AI 中文字幕（ai_zh/ai-zh，两种写法都出现过）
+_PRIORITY = ["zh-CN", "zh-Hans", "ai_zh", "ai-zh"]
 
 
 def pick_subtitle(subtitles: list[dict], lang: str | None = None) -> dict | None:

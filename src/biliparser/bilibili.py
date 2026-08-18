@@ -5,6 +5,7 @@
 """
 
 import re
+import time
 
 import httpx
 
@@ -119,6 +120,50 @@ def get_video_info(client: httpx.Client, bvid: str) -> dict:
     return data
 
 
+def get_tags(client: httpx.Client, bvid: str) -> list[str]:
+    """视频标签列表。无需登录。"""
+    data = _check(_request_json(client, "/x/tag/archive/tags", {"bvid": bvid}, "获取视频标签"), "获取视频标签")
+    return [str(t["tag_name"]) for t in data if t.get("tag_name")]
+
+
+def get_hot_comments(client: httpx.Client, aid: int, limit: int = 20) -> list[dict]:
+    """热门评论（按点赞排序，含置顶与少量楼中楼）。无需登录。
+
+    返回 [{"message", "like", "pinned", "sub": [str, ...]}, ...]。
+    未登录时 B 站只给约 20 条，够降级总结用。
+    """
+    data = _check(
+        _request_json(
+            client, "/x/v2/reply/main", {"type": 1, "oid": aid, "mode": 3}, "获取热门评论"
+        ),
+        "获取热门评论",
+    )
+    replies = list(data.get("replies") or [])
+
+    # UP 置顶评论往往交代背景，放最前
+    pinned = (data.get("upper") or {}).get("top")
+    if pinned and pinned.get("content"):
+        replies = [pinned] + [r for r in replies if r is not pinned]
+
+    out = []
+    for r in replies[:limit]:
+        msg = (r.get("content") or {}).get("message", "")
+        if not msg:
+            continue
+        out.append(
+            {
+                "message": msg,
+                "like": r.get("like", 0),
+                "pinned": r is pinned,
+                "sub": [
+                    (s.get("content") or {}).get("message", "")
+                    for s in (r.get("replies") or [])[:2]
+                ],
+            }
+        )
+    return out
+
+
 def _get_wbi_keys(client: httpx.Client) -> tuple[str, str]:
     data = _request_json(client, "/x/web-interface/nav", {}, "获取 wbi 密钥")
     return wbi.extract_keys(data["data"]["wbi_img"])
@@ -134,25 +179,35 @@ def is_logged_in(client: httpx.Client) -> bool:
     return bool(resp.get("data", {}).get("isLogin"))
 
 
-def get_subtitle_info(client: httpx.Client, bvid: str, cid: int) -> dict:
+def get_subtitle_info(client: httpx.Client, bvid: str, cid: int, attempts: int = 4) -> dict:
     """返回 player 接口的 subtitle 子对象 {"subtitles": [...], ...}。
 
-    注意：未登录时 subtitles 是静默的空列表（2026-08 实测已无
-    need_login_subtitle 标记字段），调用方需配合 is_logged_in() 区分
-    「没登录」和「没有字幕」。
+    2026-08 实测两个坑：
+    1. wbi/v2 签名端点对本工具的请求 subtitles 恒为空（疑似按指纹降级）；
+    2. /x/player/v2 多机返回不一致——同一请求约 1/3 概率非空（网页播放器
+       靠重试拿到），bvid 与 aid 参数命中率相近。
+    故按 [wbi 签名 / 不签名] × attempts 轮重试直到非空；全空时返回最后的
+    空对象，由调用方结合 is_logged_in() 区分「没登录」和「没有字幕」。
     """
-    # 优先走 wbi 签名端点（当前不强制，但签名更稳妥）
-    try:
-        img_key, sub_key = _get_wbi_keys(client)
-        params = wbi.sign_params({"bvid": bvid, "cid": cid}, img_key, sub_key)
-        data = _request_json(client, "/x/player/wbi/v2", params, "获取字幕列表")
-        if data.get("code") == 0:
-            return data.get("data", {}).get("subtitle", {}) or {}
-    except (BiliError, KeyError, ValueError):
-        pass
-    # 回退：旧端点目前同样可用
-    data = _check(_request_json(client, "/x/player/v2", {"bvid": bvid, "cid": cid}, "获取字幕列表"), "获取字幕列表")
-    return data.get("subtitle", {}) or {}
+    result = {}
+    img_key = sub_key = None
+    for attempt in range(attempts):
+        for path, sign in (("/x/player/wbi/v2", True), ("/x/player/v2", False)):
+            try:
+                params = {"bvid": bvid, "cid": cid}
+                if sign:
+                    if img_key is None:
+                        img_key, sub_key = _get_wbi_keys(client)
+                    params = wbi.sign_params(params, img_key, sub_key)
+                data = _request_json(client, path, params, "获取字幕列表")
+                if data.get("code") == 0:
+                    result = (data.get("data") or {}).get("subtitle", {}) or {}
+                    if result.get("subtitles"):
+                        return result
+            except (BiliError, KeyError, ValueError):
+                continue
+        time.sleep(0.2)  # 多机不一致，稍候换台机器再试
+    return result
 
 
 def download_subtitle(client: httpx.Client, subtitle_url: str) -> list[dict]:

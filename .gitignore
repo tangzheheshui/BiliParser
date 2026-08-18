@@ -11,3 +11,6 @@ wheels/
 
 # Pytest cache
 .pytest_cache/
+
+# biliparse 运行产物（总结输出）
+BV*.md

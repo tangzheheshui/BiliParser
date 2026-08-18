@@ -2,7 +2,7 @@
 
 B 站视频字幕提取 + AI 总结命令行工具——输入一个视频链接，输出结构化摘要（一句话总结 / 核心要点 / 章节时间线 / 关键词）。
 
-自用工具：走 B 站 web 接口拉取现成字幕（UP 上传的 CC 字幕或官方 AI 字幕），交给智谱 GLM 总结。**不含语音转写**，无字幕的视频暂不支持。
+自用工具：走 B 站 web 接口拉取现成字幕（UP 上传的 CC 字幕或官方 AI 字幕），交给智谱 GLM 总结。**不含语音转写**；拿不到字幕时（未配 SESSDATA 或视频无字幕）自动降级为「元数据 + 热评」的推断性总结。
 
 ## 安装
 
@@ -18,7 +18,7 @@ uv sync
 首次使用前创建 `~/.biliparser/config.toml`（Windows 即 `C:\Users\<你>\.biliparser\config.toml`）：
 
 ```toml
-# B 站登录 Cookie（获取字幕必需）
+# B 站登录 Cookie（走完整字幕总结必需；不配则自动降级为元数据+热评总结）
 sessdata = "你的SESSDATA"
 
 [glm]
@@ -47,6 +47,9 @@ uv run biliparse BV1xx411c7mD --page 2
 # 只看字幕全文（不花 LLM 的钱，调试用）
 uv run biliparse BV1xx411c7mD --subtitle-only
 
+# 详尽版总结（不漏话题、保留具体数字与金句，存为 <BV号>-详细.md）
+uv run biliparse BV1xx411c7mD --detailed --save
+
 # 保存为 Markdown 文件
 uv run biliparse BV1xx411c7mD --save          # 存为 <BV号>.md
 uv run biliparse BV1xx411c7mD --save 总结.md
@@ -54,6 +57,10 @@ uv run biliparse BV1xx411c7mD --save 总结.md
 # 指定字幕语言（默认优先中文字幕：CC > AI）
 uv run biliparse BV1xx411c7mD --lang ai_zh
 ```
+
+### 降级模式：元数据 + 热评总结
+
+只配 `glm.api_key` 不配 `sessdata` 也能用：此时拿不到字幕，工具会自动拉取公开的标签和热门评论，让 AI 输出**推断性**总结（一句话总结 / 核心要点 / 评论区看点 / 关键词）。配好 `sessdata` 后自动回到完整字幕总结。
 
 ## 开发
 
@@ -64,8 +71,8 @@ uv run biliparse --help
 
 ## 常见问题
 
-- **提示「该视频没有可用字幕」**：纯音乐、方言较重或发布不久的视频常没有 AI 字幕，属正常限制。
-- **提示「SESSDATA 未配置或已失效」**：按上文重新复制 SESSDATA。
+- **提示「该视频没有可用字幕」**：纯音乐、方言较重或发布不久的视频常没有 AI 字幕，属正常限制（此时总结会自动降级为元数据+热评模式；`--subtitle-only` 仍会报错）。
+- **提示「SESSDATA 未配置或已失效」**：按上文重新复制 SESSDATA（约一个月过期）。
 - **HTTP 412**：请求头不完整会触发风控（本工具已内置完整浏览器请求头规避）；若仍出现说明请求过于频繁，等几分钟再用。
 
 ## 已知边界（MVP）

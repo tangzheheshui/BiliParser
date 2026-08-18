@@ -31,6 +31,47 @@ CHUNK_SYSTEM_PROMPT = (
     "请用中文简洁列出该部分的要点（含关键时间戳，格式 [mm:ss]）。"
 )
 
+# --detailed 模式：详尽完整版，硬性要求不漏话题、保留具体数字
+DETAILED_SYSTEM_PROMPT = """你是专业的视频内容详细总结助手。用户给你一份带时间戳的视频字幕（每行 [mm:ss] 内容）。
+
+要求输出**详尽完整**的中文 Markdown 总结，硬性规则：字幕里每一个独立话题都必须覆盖，不允许合并省略；尽量保留原文中的具体数字、价格、涨跌幅、公司名、事件名、人名。结构：
+
+## 视频概览
+（3~5 句：这是什么类型的视频、博主是谁、整体讲了什么、结论基调）
+
+## 逐段详解
+（按时间线分 6~10 段；每段格式：`[mm:ss]` 小标题，下面 3~6 句详述该段内容，时间戳取自字幕原文）
+
+## 关键数据与事实
+- （把字幕中出现的所有具体数字/金额/价格/日期/公司/产品逐条列出）
+
+## 博主核心观点
+- （每条：观点 + 他给出的支撑逻辑/态度强弱，标注「明确看好/明确看空/中性观察/自嘲吐槽」）
+
+## 金句摘录
+- `[mm:ss]` 「原文」（有记忆点的原话，3~6 条，没有就省略本节）
+
+直接输出正文，不要寒暄。"""
+
+# 降级模式：拿不到字幕，只有元数据 + 热评
+META_SYSTEM_PROMPT = """你是视频内容总结助手。这次没有视频字幕，只有视频的公开信息（标题、简介、标签、数据）和热门评论。评论是观众视角，既有内容线索也有玩笑和噪音，请自行甄别。
+
+请用中文输出 Markdown 格式的总结，结构固定为：
+
+## 一句话总结
+（一句话概括视频最可能的内容）
+
+## 核心要点
+- （3~6 条，按可信度排序）
+
+## 评论区看点
+- （2~4 条：观众在讨论/玩什么梗）
+
+## 关键词
+`关键词1` `关键词2` ...
+
+注意：材料有限，总结是推断性的——把把握大的放前面，不确定的不要写成事实，完全无从判断的就明说。直接输出总结正文，不要额外寒暄。"""
+
 
 class SummarizeError(Exception):
     def __init__(self, message: str, hint: str | None = None):
@@ -38,8 +79,74 @@ class SummarizeError(Exception):
         self.hint = hint
 
 
+def _is_anthropic_endpoint(cfg) -> bool:
+    """base_url 指向 Anthropic 兼容端点（GLM Coding Plan，如 Claude Code 在用）。"""
+    return cfg.glm_base_url.rstrip("/").endswith("/anthropic")
+
+
+def _error_detail(resp) -> str:
+    """从错误响应里尽力抽出人话（OpenAI 风格与 Anthropic 风格都试）。"""
+    try:
+        err = resp.json().get("error") or {}
+        if isinstance(err, dict) and err.get("message"):
+            return str(err["message"])
+    except ValueError:
+        pass
+    return resp.text[:200]
+
+
+def _chat_anthropic(cfg, messages: list[dict]) -> str:
+    """Anthropic Messages 协议（/v1/messages）：system 从 messages 里抽出来。"""
+    url = cfg.glm_base_url.rstrip("/") + "/v1/messages"
+    headers = {
+        "x-api-key": cfg.glm_api_key,
+        "Authorization": f"Bearer {cfg.glm_api_key}",
+        "anthropic-version": "2023-06-01",
+    }
+    system = "\n\n".join(m["content"] for m in messages if m["role"] == "system")
+    body = {
+        "model": cfg.glm_model,
+        "max_tokens": 8192,
+        "system": system,
+        "messages": [
+            {"role": m["role"], "content": m["content"]}
+            for m in messages
+            if m["role"] != "system"
+        ],
+    }
+    try:
+        resp = httpx.post(url, json=body, headers=headers, timeout=180)
+    except httpx.HTTPError as e:
+        raise SummarizeError(f"请求 AI 接口失败：{e.__class__.__name__}") from e
+    if resp.status_code == 401:
+        raise SummarizeError("API Key 无效（HTTP 401）", hint="请检查配置中的 glm.api_key")
+    if resp.status_code != 200:
+        detail = _error_detail(resp)
+        if "余额不足" in detail or "无可用资源包" in detail:
+            raise SummarizeError(
+                f"AI 调用失败：{detail}",
+                hint="请到 https://open.bigmodel.cn 充值或领取资源包后重试",
+            )
+        raise SummarizeError(f"AI 接口返回 HTTP {resp.status_code}：{detail}")
+    try:
+        return "".join(
+            block["text"] for block in resp.json()["content"] if block.get("type") == "text"
+        )
+    except (KeyError, TypeError, ValueError) as e:
+        raise SummarizeError(f"AI 返回格式异常：{resp.text[:200]}") from e
+
+
 def _chat(cfg, messages: list[dict]) -> str:
-    """调一次 chat/completions，429 重试一次。"""
+    """调一次对话接口；真限流时重试一次。
+
+    支持两种端点：OpenAI 兼容（paas/v4，默认）与 Anthropic 兼容
+    （base_url 以 /anthropic 结尾时自动切换协议）。
+    注意：智谱余额不足（错误码 1113）也返回 HTTP 429，不能重试，
+    要把「请充值」透出给用户。
+    """
+    if _is_anthropic_endpoint(cfg):
+        return _chat_anthropic(cfg, messages)
+
     url = cfg.glm_base_url.rstrip("/") + "/chat/completions"
     headers = {"Authorization": f"Bearer {cfg.glm_api_key}"}
     body = {"model": cfg.glm_model, "messages": messages, "temperature": 0.3}
@@ -48,15 +155,21 @@ def _chat(cfg, messages: list[dict]) -> str:
             resp = httpx.post(url, json=body, headers=headers, timeout=180)
         except httpx.HTTPError as e:
             raise SummarizeError(f"请求 AI 接口失败：{e.__class__.__name__}") from e
-        if resp.status_code == 429 and attempt == 1:
-            time.sleep(2)
-            continue
         if resp.status_code == 401:
             raise SummarizeError(
                 "API Key 无效（HTTP 401）", hint="请检查配置中的 glm.api_key"
             )
         if resp.status_code != 200:
-            raise SummarizeError(f"AI 接口返回 HTTP {resp.status_code}：{resp.text[:200]}")
+            detail = _error_detail(resp)
+            if "余额不足" in detail or "无可用资源包" in detail:
+                raise SummarizeError(
+                    f"AI 调用失败：{detail}",
+                    hint="请到 https://open.bigmodel.cn 充值或领取资源包后重试",
+                )
+            if resp.status_code == 429 and attempt == 1:
+                time.sleep(2)  # 真限流，稍候重试一次
+                continue
+            raise SummarizeError(f"AI 接口返回 HTTP {resp.status_code}：{detail}")
         try:
             return resp.json()["choices"][0]["message"]["content"]
         except (KeyError, IndexError, ValueError) as e:
@@ -78,13 +191,32 @@ def _split_transcript(transcript: str) -> list[str]:
     return chunks
 
 
-def summarize(transcript: str, video_title: str, cfg) -> str:
-    """字幕 → Markdown 总结。超长字幕分块提取要点后合并。"""
+def summarize_meta(meta_context: str, video_title: str, cfg) -> str:
+    """降级模式：元数据 + 热评上下文 → Markdown 总结。"""
+    return _chat(
+        cfg,
+        [
+            {"role": "system", "content": META_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": f"视频标题：{video_title}\n\n公开信息与热门评论：\n{meta_context}",
+            },
+        ],
+    )
+
+
+def summarize(transcript: str, video_title: str, cfg, detailed: bool = False) -> str:
+    """字幕 → Markdown 总结。超长字幕分块提取要点后合并。
+
+    detailed=True 用详尽版 prompt（--detailed）：不漏话题、保留具体数字，
+    长 Video 分块时 map 步骤不变，最终 reduce 用详尽模板。
+    """
+    final_prompt = DETAILED_SYSTEM_PROMPT if detailed else SYSTEM_PROMPT
     if len(transcript) <= MAX_CHARS:
         return _chat(
             cfg,
             [
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": final_prompt},
                 {"role": "user", "content": f"视频标题：{video_title}\n\n字幕文本：\n{transcript}"},
             ],
         )
@@ -107,7 +239,7 @@ def summarize(transcript: str, video_title: str, cfg) -> str:
     return _chat(
         cfg,
         [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": final_prompt},
             {
                 "role": "user",
                 "content": (
