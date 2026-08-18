@@ -1,0 +1,24 @@
+[project]
+name = "biliparser"
+version = "0.1.0"
+description = "BiliParser — B 站视频字幕提取与 AI 总结 CLI"
+readme = "README.md"
+authors = [
+    { name = "liuhaifengs", email = "liuhaifengs@zwcax.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.28.1",
+]
+
+[project.scripts]
+biliparse = "biliparser.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.3,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
