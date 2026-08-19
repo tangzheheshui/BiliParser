@@ -4,8 +4,11 @@
 接口可用性于 2026-08-18 实测验证。
 """
 
+import hashlib
+import json
 import re
 import time
+from pathlib import Path
 
 import httpx
 
@@ -232,9 +235,62 @@ def download_subtitle(client: httpx.Client, subtitle_url: str) -> list[dict]:
     return resp.json().get("body") or []
 
 
+# ---------------- 跨视频重复字幕检测（串台实锤手段） ----------------
+# 实测（2026-08）：同一份错误字幕文件会出现在多个不同视频下（「弟弟读大学」
+# 字幕同时挂在乡村 vlog 和西游记解读两个视频上）。语义校验对同题材串台
+# 无能为力，但「同一字幕文本出现在两个 cid 下」是确定性矛盾——记录指纹，
+# 命中即拒。副作用：搬运/重传的视频（内容相同）会误报，错误信息会提示。
+
+_SEEN_PATH = Path.home() / ".biliparser" / "seen_subs.json"
+
+
+def _load_seen() -> dict:
+    try:
+        data = json.loads(_SEEN_PATH.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_seen(seen: dict) -> None:
+    try:
+        _SEEN_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _SEEN_PATH.write_text(json.dumps(seen, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def subtitle_fingerprint(lines: list[dict]) -> str:
+    """字幕内容指纹：首行 + 行数 + 总字符量。足以识别同一文件的重复分发。"""
+    first = next((str(l.get("content", "")).strip() for l in lines if str(l.get("content", "")).strip()), "")
+    total = sum(len(str(l.get("content", ""))) for l in lines)
+    return hashlib.sha256(f"{first}|{len(lines)}|{total}".encode()).hexdigest()[:16]
+
+
+def get_audio_url(client: httpx.Client, bvid: str, cid: int) -> str:
+    """取音频流地址（DASH 最低码率那条），供本地 ASR 兜底使用。
+
+    需要 SESSDATA 登录态才能拿到 DASH。ASR 场景人声用低码率足够。
+    """
+    data = _check(
+        _request_json(
+            client, "/x/player/playurl",
+            {"bvid": bvid, "cid": cid, "fnval": 16, "qn": 0}, "获取音频流",
+        ),
+        "获取音频流",
+    )
+    audio = ((data.get("dash") or {}).get("audio")) or []
+    if not audio:
+        raise BiliError(
+            "拿不到音频流（DASH）",
+            hint="未登录（SESSDATA）或该视频不允许下载；ASR 兜底需要登录态",
+        )
+    return min(audio, key=lambda a: a.get("bandwidth") or 10**9)["baseUrl"]
+
+
 def fetch_full_subtitle(
     client: httpx.Client, bvid: str, cid: int, duration: int = 0,
-    min_coverage: float = 0.8, rounds: int = 8, lang: str | None = None,
+    min_coverage: float = 0.8, rounds: int = 4, lang: str | None = None,
 ) -> tuple[dict | None, list[dict], float]:
     """挑「最完整」的一条字幕，返回 (sub, lines, coverage)。
 
@@ -258,6 +314,7 @@ def fetch_full_subtitle(
     """
     best_sub, best_lines, best_cov = None, [], 0.0
     fingerprints: set[str] = set()
+    seen = _load_seen()
     for _ in range(rounds):
         subs = get_subtitle_info(client, bvid, cid).get("subtitles") or []
         if lang:
@@ -274,8 +331,16 @@ def fetch_full_subtitle(
             first = next((str(l.get("content", "")).strip() for l in lines if str(l.get("content", "")).strip()), "")
             if first:
                 fingerprints.add(first)
+            # 跨视频重复：同一字幕文件挂在别的视频下 = 串台实锤，跳过
+            owner = seen.get(subtitle_fingerprint(lines))
+            if owner is not None and owner != cid:
+                continue
             if duration:
-                cov = min(max(l.get("to") or 0 for l in lines) / duration, 1.0)
+                max_to = max(l.get("to") or 0 for l in lines)
+                # 字幕比视频还长（留 5% 容差）：数学上不可能，串台实锤
+                if max_to > duration * 1.05:
+                    continue
+                cov = min(max_to / duration, 1.0)
             else:
                 cov = 1.0
             score = cov if duration else float(len(lines))
@@ -283,5 +348,8 @@ def fetch_full_subtitle(
                 best_sub, best_lines, best_cov = sub, lines, cov
         if best_lines and (not duration or best_cov >= min_coverage):
             break
-        time.sleep(0.15)
+        time.sleep(0.05)
+    if best_lines:
+        seen[subtitle_fingerprint(best_lines)] = cid
+        _save_seen(seen)
     return best_sub, best_lines, (best_cov if duration else 1.0), len(fingerprints) <= 1

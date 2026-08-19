@@ -72,6 +72,20 @@ uv run biliparse-web            # http://127.0.0.1:7842
 （原始字幕 / 标准总结 / 详尽总结 / 元数据+热评 四个页签，支持复制与导出 .md）。
 零新依赖（标准库起服务 + 单文件前端），需求与设计见 [docs/web-workspace.md](docs/web-workspace.md)。
 
+## 桌面版与发行模式（激活码）
+
+```bash
+uv sync --group desktop                          # pywebview + pyinstaller
+uv run biliparser-desktop                        # 直连模式（自用）
+uv run biliparser-desktop --server https://…     # 发行模式：首启激活码
+bash packaging/build-macos.sh                    # 打包 dist/BiliParser.app
+```
+
+发行模式：一码一机 + 72h 离线宽限；AI 调用经授权服务器代理（服务器持有
+GLM key、按码每日限流），B 站请求仍走用户本机。授权服务器在
+`license-server/`（Flask + SQLite + 管理后台），需求见
+[docs/licensing.md](docs/licensing.md)，部署见 [docs/deploy.md](docs/deploy.md)。
+
 ## 开发
 
 ```bash

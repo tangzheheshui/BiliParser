@@ -9,9 +9,25 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import bilibili, config, meta, subtitle, summarizer
+from . import bilibili, config, licensing, meta, subtitle, summarizer
 
-STATIC_DIR = Path(__file__).parent / "static"
+def _resolve_static_dir() -> Path:
+    """静态页面目录：源码运行在包目录下；PyInstaller frozen 时在
+    sys._MEIPASS（Contents/Frameworks）下，两处都找。"""
+    here = Path(__file__).parent / "static"
+    if here.exists():
+        return here
+    import sys
+
+    base = getattr(sys, "_MEIPASS", None)
+    if base:
+        alt = Path(base) / "biliparser" / "static"
+        if alt.exists():
+            return alt
+    return here
+
+
+STATIC_DIR = _resolve_static_dir()
 PROMPTS_PATH = Path.home() / ".biliparser" / "prompts.json"
 
 # 进程内缓存：bvid → {"info": …, "pages": …, "transcript": …, "meta": …}
@@ -82,14 +98,15 @@ def _get_transcript(entry: dict, cfg) -> dict:
         )
     if not lines:
         raise ApiError("字幕文件内容为空")
+    text = subtitle.build_transcript(lines)
     transcript = {
         "lan": sub.get("lan") or "",
         "lan_doc": sub.get("lan_doc") or sub.get("lan") or "",
         "lines": len(lines),
-        "chars": len(subtitle.build_transcript(lines)),
+        "chars": len(text),
         "coverage": cov,
         "consistent": consistent,
-        "text": subtitle.build_transcript(lines),
+        "text": text,
     }
     entry["transcripts"][entry["cid"]] = transcript
     return transcript
@@ -225,6 +242,64 @@ def api_meta(url: str, page: int | None, cfg) -> dict:
     return {"bvid": entry["bvid"], "context": _get_meta(entry, cfg)}
 
 
+# ---------------- 授权 / 配置（发行版模式） ----------------
+
+def api_license_state(cfg) -> dict:
+    """激活门与状态卡数据。server 为空 = 直连模式，前端不设门。"""
+    state = {
+        "server": cfg.managed_server,
+        "activated": False,
+        "online": False,
+        "reason": "",
+        "usage": None,
+        "fingerprint": licensing.fingerprint()[:16] + "…",
+    }
+    if cfg.managed_server and licensing.load_credential():
+        v = licensing.verify(cfg.managed_server)
+        state.update(activated=v["ok"], online=v.get("online", False),
+                     reason=v.get("reason", ""), usage=v.get("usage"))
+    return state
+
+
+def api_license_activate(data: dict, cfg) -> dict:
+    server = str(data.get("server") or cfg.managed_server or "").strip()
+    code = str(data.get("code") or "").strip()
+    if not server or not code:
+        raise ApiError("需要 server 和 code")
+    licensing.activate(server, code)  # 失败抛 LicensingError → 统一转 4xx
+    if server != cfg.managed_server:
+        config.update_config({"managed.server_url": server})
+        cfg.managed_server = server
+    return api_license_state(cfg)
+
+
+def api_config_get(cfg) -> dict:
+    return {
+        "sessdata_configured": bool(cfg.sessdata),
+        "sessdata_hint": "" if cfg.sessdata else "未配置（拉字幕需要）",
+        "managed_server": cfg.managed_server,
+        "model": cfg.glm_model,
+        "glm_configured": bool(cfg.glm_api_key),
+        "config_path": str(config.CONFIG_PATH),
+    }
+
+
+def api_config_save(data: dict, cfg) -> dict:
+    """设置面板写回：sessdata / 授权服务器地址（None 表示不改）。"""
+    updates: dict = {}
+    if "sessdata" in data:
+        updates["sessdata"] = str(data.get("sessdata") or "").strip()
+    if "managed_server" in data:
+        updates["managed.server_url"] = str(data.get("managed_server") or "").strip()
+    if not updates:
+        raise ApiError("没有要保存的字段")
+    config.update_config(updates)
+    fresh = config.load_config(require=())
+    cfg.sessdata = fresh.sessdata
+    cfg.managed_server = fresh.managed_server
+    return api_config_get(cfg)
+
+
 # ---------------- HTTP 层 ----------------
 
 class Handler(BaseHTTPRequestHandler):
@@ -254,7 +329,8 @@ class Handler(BaseHTTPRequestHandler):
         """统一执行：业务异常 → 4xx + {error, hint}；未预期异常 → 500。"""
         try:
             return self._send_json(fn(*args))
-        except (ApiError, bilibili.BiliError, config.ConfigError, summarizer.SummarizeError) as e:
+        except (ApiError, bilibili.BiliError, config.ConfigError,
+                summarizer.SummarizeError, licensing.LicensingError) as e:
             return self._send_json(
                 {"error": str(e), "hint": getattr(e, "hint", None) or getattr(e, "message", None)},
                 status=getattr(e, "status", 400),
@@ -277,6 +353,20 @@ class Handler(BaseHTTPRequestHandler):
             self._run(api_status, self.cfg)
         elif self.path == "/api/prompts":
             self._run(lambda: {"prompts": load_prompts()})
+        elif self.path == "/api/license/state":
+            self._run(api_license_state, self.cfg)
+        elif self.path == "/api/config/get":
+            self._run(api_config_get, self.cfg)
+        elif self.path == "/activate.html":
+            page = STATIC_DIR / "activate.html"
+            if not page.exists():
+                return self._send_json({"error": f"前端文件缺失：{page}"}, status=500)
+            body = page.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
         else:
             self._send_json({"error": "not found"}, status=404)
 
@@ -290,6 +380,10 @@ class Handler(BaseHTTPRequestHandler):
             ),
             "/api/meta": lambda d: api_meta(d.get("url", ""), d.get("page"), self.cfg),
             "/api/prompts": lambda d: upsert_prompt(d),
+            "/api/license/state": lambda d: api_license_state(self.cfg),
+            "/api/license/activate": lambda d: api_license_activate(d, self.cfg),
+            "/api/config/get": lambda d: api_config_get(self.cfg),
+            "/api/config/save": lambda d: api_config_save(d, self.cfg),
         }
         fn = routes.get(self.path)
         if not fn:

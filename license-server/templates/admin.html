@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>BiliParser 授权管理</title>
+<style>
+body{font:14px/1.6 -apple-system,"PingFang SC",sans-serif;margin:24px;background:#f5f6f8;color:#222}
+h1{font-size:18px} h2{font-size:15px;margin-top:28px}
+table{border-collapse:collapse;width:100%;background:#fff;margin:12px 0;font-size:13px}
+th,td{border:1px solid #ddd;padding:6px 10px;text-align:left;vertical-align:top}
+th{background:#eef1f5}
+form.inline{display:inline}
+input,select,button{font-size:13px;padding:4px 8px;margin:2px}
+button{cursor:pointer}
+.gen{background:#fff;border:1px solid #ccc;border-radius:6px;padding:10px 14px;margin:10px 0}
+.newcodes{background:#e8f7ee;border:1px solid #9fd8b4;border-radius:6px;padding:8px 12px;margin:10px 0;font-family:monospace;white-space:pre-wrap}
+.off{color:#c0392b}.on{color:#1e8e4e}.muted{color:#888;font-size:12px}
+</style>
+</head>
+<body>
+<h1>BiliParser 授权管理后台</h1>
+
+<div class="gen">
+  <form method="post" action="/admin/generate">
+    <input type="hidden" name="key" value="{{ key }}">
+    生成 <input name="count" value="1" size="3"> 个，
+    备注 <input name="note" placeholder="买家备注（可选）">
+    有效期 <input name="days" placeholder="天数，留空=永久" size="12">
+    <button type="submit">生成激活码</button>
+  </form>
+</div>
+
+{% if generated %}
+<div class="newcodes">新激活码（复制发给买家）：
+{% for c in generated %}{{ c }}
+{% endfor %}</div>
+{% endif %}
+
+<h2>激活码列表（{{ rows|length }}）</h2>
+<table>
+  <tr>
+    <th>ID</th><th>激活码</th><th>备注</th><th>状态</th><th>绑定设备</th>
+    <th>今日用量/配额</th><th>有效期</th><th>解绑次数</th><th>操作</th>
+  </tr>
+  {% for r in rows %}
+  <tr>
+    <td>{{ r.id }}</td>
+    <td style="font-family:monospace">{{ r.code }}</td>
+    <td>{{ r.note or '' }}</td>
+    <td>
+      {% if not r.is_active %}<span class="off">已禁用</span>
+      {% elif r.device_fingerprint %}<span class="on">已激活</span>
+      {% else %}<span class="muted">未激活</span>{% endif %}
+    </td>
+    <td class="muted" title="{{ r.device_fingerprint or '' }}">
+      {{ (r.device_fingerprint or '')[:16] }}
+    </td>
+    <td>{{ r.used_today }}/{{ r.daily_quota }}</td>
+    <td>{{ r.expires_at or '永久' }}</td>
+    <td>{{ r.unbind_count }}</td>
+    <td>
+      <form class="inline" method="post" action="/admin/action">
+        <input type="hidden" name="key" value="{{ key }}">
+        <input type="hidden" name="id" value="{{ r.id }}">
+        <button name="op" value="toggle">{{ '启用' if not r.is_active else '禁用' }}</button>
+      </form>
+      <form class="inline" method="post" action="/admin/action">
+        <input type="hidden" name="key" value="{{ key }}">
+        <input type="hidden" name="id" value="{{ r.id }}">
+        <button name="op" value="unbind" onclick="return confirm('解绑后原设备立即失效，买家需重新激活。确定？')">解绑</button>
+      </form>
+      <form class="inline" method="post" action="/admin/action">
+        <input type="hidden" name="key" value="{{ key }}">
+        <input type="hidden" name="id" value="{{ r.id }}">
+        <input name="daily_quota" value="{{ r.daily_quota }}" size="3">
+        <button name="op" value="quota">配额</button>
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+<p class="muted">解绑是换机通道，也最容易被滥用（解绑→分享给下一人），留意异常解绑次数。
+管理密钥请勿外泄，生产环境务必走 HTTPS。</p>
+</body>
+</html>

@@ -22,6 +22,21 @@ body{background:var(--bg);color:var(--text);font:14px/1.6 -apple-system,"PingFan
 /* 左栏 */
 .brand{display:flex;align-items:center;gap:8px;font-weight:700;font-size:16px;padding:14px 16px;border-bottom:1px solid var(--line)}
 .brand .dot{width:10px;height:10px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent)}
+.brand .gear{margin-left:auto;border:none;background:none;color:var(--dim);cursor:pointer;font-size:15px;padding:2px 4px}
+.brand .gear:hover{color:var(--accent2)}
+#settings{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:50}
+#settings.show{display:flex}
+#settings .card{width:430px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:22px}
+#settings h3{font-size:15px;margin-bottom:4px}
+#settings .sub{color:var(--dim);font-size:12px;margin-bottom:14px}
+#settings label{display:block;font-size:12px;color:var(--dim);margin:12px 0 5px}
+#settings input{width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--text);padding:8px 12px;font-size:13px;outline:none}
+#settings input:focus{border-color:var(--accent)}
+#settings .acts{display:flex;gap:8px;margin-top:18px}
+#settings .acts button{flex:1;padding:8px;border-radius:8px;border:none;cursor:pointer;font-size:13px}
+#settings .save{background:linear-gradient(135deg,#2b6cb0,#3182ce);color:#fff;font-weight:600}
+#settings .cancel{background:var(--panel2);color:var(--dim);border:1px solid var(--line)!important}
+#settings .note{color:var(--dim);font-size:11px;margin-top:10px}
 .sec-title{font-size:11px;color:var(--dim);letter-spacing:.12em;margin:14px 0 8px;text-transform:uppercase}
 .btn{display:block;width:100%;text-align:left;padding:8px 12px;margin-bottom:7px;border:1px solid var(--line);
   border-radius:8px;background:var(--panel2);color:var(--text);cursor:pointer;font-size:13px;transition:.15s}
@@ -132,7 +147,9 @@ pre.raw{font-family:var(--mono);font-size:12.5px;white-space:pre-wrap;word-break
 
   <!-- 左：操作区 -->
   <div class="col" id="left">
-    <div class="brand"><span class="dot"></span>BiliParser 工作台</div>
+    <div class="brand"><span class="dot"></span>BiliParser 工作台
+      <button class="gear" id="gear" title="设置">⚙</button>
+    </div>
     <div class="pane">
       <div class="sec-title">生成类型</div>
       <select id="gen-type" class="gensel"></select>
@@ -184,6 +201,23 @@ pre.raw{font-family:var(--mono);font-size:12.5px;white-space:pre-wrap;word-break
   </div>
 
 </div>
+
+<!-- 设置面板 -->
+<div id="settings">
+  <div class="card">
+    <h3>设置</h3>
+    <div class="sub">保存在本机 <span id="cfgpath"></span>，桌面版无需手改文件</div>
+    <label>B 站 SESSDATA（拉字幕必需）</label>
+    <input id="set-sessdata" placeholder="浏览器 F12 → 应用 → Cookie → SESSDATA" spellcheck="false">
+    <label>授权服务器（留空 = 直连模式，本地配 GLM key）</label>
+    <input id="set-server" placeholder="https://lic.example.com" spellcheck="false">
+    <div class="acts">
+      <button class="cancel" onclick="$('#settings').classList.remove('show')">取消</button>
+      <button class="save" id="set-save">保存</button>
+    </div>
+    <div class="note">改动 SESSDATA 后建议重新拉取字幕。设置授权服务器后重启应用生效激活流程。</div>
+  </div>
+</div>
 <script>
 const $ = s => document.querySelector(s);
 
@@ -193,6 +227,7 @@ let cur = null;                 // 当前 bvid
 let prompts = [];               // [{id,name,prompt}]
 let editingPid = null;          // 正在编辑的模板 id（null=新建）
 let busy = false;
+let license = null;             // /api/license/state 结果（managed 模式才有内容）
 
 const FIXED_TABS = [
   {id:'subtitle', label:'原始字幕'},
@@ -515,17 +550,60 @@ $('#clear').onclick=()=>{
 async function loadStatus(){
   try{
     const d=await api('/api/status');
+    const lic=license||{};
+    let licRow='';
+    if(lic.server){
+      const u=lic.usage;
+      licRow=`
+      <div class="row"><span>授权</span><span class="badge ${lic.activated?'ok':'no'}">${lic.activated?(lic.online?'已激活':'离线宽限'):'未激活'}</span></div>
+      ${u?`<div class="row"><span>今日 AI</span><b>${u.today_used}/${u.daily_quota}</b></div>`:''}
+      <div class="row"><span>AI 通道</span><b>服务器代理</b></div>`;
+    }
     $('#status').innerHTML=`
+      ${licRow}
       <div class="row"><span>SESSDATA</span><span class="badge ${d.sessdata_configured?'ok':'no'}">${d.sessdata_configured?'已配置':'未配置'}</span></div>
-      <div class="row"><span>GLM Key</span><span class="badge ${d.glm_key_configured?'ok':'no'}">${d.glm_key_configured?'已配置':'未配置'}</span></div>
-      <div class="row"><span>模型</span><b>${esc(d.model)}</b></div>
-      <div class="row"><span>端点</span><b>${d.endpoint==='anthropic'?'Anthropic 兼容':'OpenAI 兼容'}</b></div>`;
+      ${lic.server?'':`<div class="row"><span>GLM Key</span><span class="badge ${d.glm_key_configured?'ok':'no'}">${d.glm_key_configured?'已配置':'未配置'}</span></div>`}
+      <div class="row"><span>模型</span><b>${esc(lic.server?'服务器端控制':d.model)}</b></div>`;
   }catch(e){$('#status').textContent='状态获取失败：'+e.message}
 }
+
+/* ---------- 激活门与设置 ---------- */
+async function loadLicense(){
+  try{
+    const s=await api('/api/license/state');
+    license=s;
+    if(s.server && !s.activated){ location.href='/activate.html'; return false; }
+    return true;
+  }catch(e){ return true; }  // 拿不到状态不拦人（本地直连模式）
+}
+$('#gear').onclick=async()=>{
+  try{
+    const d=await api('/api/config/get');
+    $('#cfgpath').textContent=d.config_path;
+    $('#set-sessdata').value=d.sessdata_configured?'（已配置，留空保持不变）':'';
+    $('#set-sessdata').dataset.configured=d.sessdata_configured?'1':'';
+    $('#set-server').value=d.managed_server||'';
+  }catch(e){}
+  $('#settings').classList.add('show');
+};
+$('#set-save').onclick=async()=>{
+  const body={};
+  const sd=$('#set-sessdata').value.trim();
+  if(sd && !sd.startsWith('（')) body.sessdata=sd;   // 占位提示文字不提交
+  const sv=$('#set-server').value.trim();
+  if(sv!==($('#set-server').defaultValue)) body.managed_server=sv;
+  if(!Object.keys(body).length){ $('#settings').classList.remove('show'); return toast('没有改动'); }
+  try{
+    await api('/api/config/save',body);
+    $('#settings').classList.remove('show');
+    await loadLicense(); await loadStatus(); toast('已保存');
+  }catch(e){ toast(String(e.message||e)); }
+};
 function refreshButtons(forceDisable){
   $('#b-gen').disabled=!(ws()&&!forceDisable);
 }
-loadStatus(); loadPrompts().then(()=>{renderPlist();renderTypeSelect();}); renderTabbar();
+loadLicense().then(ok=>{ if(ok){ loadStatus(); } });   // 激活门：managed 未激活会跳激活页
+loadPrompts().then(()=>{renderPlist();renderTypeSelect();}); renderTabbar();
 </script>
 </body>
 </html>

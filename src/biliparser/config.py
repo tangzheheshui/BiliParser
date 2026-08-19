@@ -42,6 +42,9 @@ class Config:
     glm_api_key: str = ""
     glm_model: str = "glm-4.7"
     glm_base_url: str = "https://open.bigmodel.cn/api/paas/v4/"
+    # 发行版模式：授权服务器地址。设置后 AI 调用走服务器代理（需已激活），
+    # 留空 = 直连模式（自用，本地配 GLM key）
+    managed_server: str = ""
 
 
 def load_config(require: tuple[str, ...] = ()) -> Config:
@@ -67,6 +70,9 @@ def load_config(require: tuple[str, ...] = ()) -> Config:
             cfg.glm_model = str(glm["model"])
         if glm.get("base_url"):
             cfg.glm_base_url = str(glm["base_url"])
+        managed = raw.get("managed", {})
+        if isinstance(managed, dict):
+            cfg.managed_server = str(managed.get("server_url", "") or "")
 
     # 环境变量优先
     cfg.sessdata = os.environ.get("BILI_SESSDATA", cfg.sessdata)
@@ -77,6 +83,16 @@ def load_config(require: tuple[str, ...] = ()) -> Config:
         cfg.glm_model = os.environ["BILIPARSER_MODEL"]
     if os.environ.get("BILIPARSER_BASE_URL"):
         cfg.glm_base_url = os.environ["BILIPARSER_BASE_URL"]
+    if os.environ.get("BILIPARSER_LICENSE_SERVER"):
+        cfg.managed_server = os.environ["BILIPARSER_LICENSE_SERVER"]
+    if not cfg.managed_server:
+        # 发行版打包时烧进来的默认授权服务器（见 packaging/build-macos.sh），
+        # 优先级低于上面的环境变量和用户配置文件
+        bundled = Path(__file__).parent / "_dist_server.txt"
+        if bundled.exists():
+            server = bundled.read_text(encoding="utf-8").strip()
+            if server:
+                cfg.managed_server = server
 
     # 未配置 GLM key 时，自动复用环境里的智谱 Coding Plan 凭证
     # （即 Claude Code 经 ANTHROPIC_BASE_URL/ANTHROPIC_AUTH_TOKEN 走的那套，
@@ -99,3 +115,49 @@ def load_config(require: tuple[str, ...] = ()) -> Config:
         lines.append(CONFIG_TEMPLATE)
         raise ConfigError("\n".join(lines))
     return cfg
+
+
+def _toml_value(v) -> str:
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return str(v)
+    return '"' + str(v).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def update_config(values: dict) -> None:
+    """把 {'sessdata': …, 'managed.server_url': …} 写回配置文件（点号表示子表）。
+
+    注意：会重写整个文件（我们的 schema 只有「顶层标量 + 一层子表」），
+    手写注释会丢。字段值为 None 的跳过不动。
+    """
+    raw: dict = {}
+    if CONFIG_PATH.exists():
+        try:
+            raw = tomllib.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        except tomllib.TOMLDecodeError:
+            raw = {}
+    for key, val in values.items():
+        if val is None:
+            continue
+        if "." in key:
+            table, field = key.split(".", 1)
+            raw.setdefault(table, {})[field] = val
+        else:
+            raw[key] = val
+
+    lines = ["# BiliParser 配置文件（由应用设置面板维护，注释会被覆盖）"]
+    for key, val in raw.items():
+        if not isinstance(val, dict):
+            lines.append(f"{key} = {_toml_value(val)}")
+    for name, table in raw.items():
+        if not isinstance(table, dict):
+            continue
+        lines.append("")
+        lines.append(f"[{name}]")
+        for key, val in table.items():
+            if isinstance(val, dict):
+                continue  # 只支持一层
+            lines.append(f"{key} = {_toml_value(val)}")
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    CONFIG_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")

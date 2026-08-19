@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>激活 BiliParser</title>
+<style>
+:root{--bg:#101418;--panel:#171d24;--panel2:#1d2530;--line:#2a3542;--text:#dce4ee;
+--dim:#8b98a8;--accent:#4da3ff;--accent2:#7ec8ff;--ok:#4dd88a;--err:#ff6b6b}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font:14px/1.6 -apple-system,"PingFang SC",sans-serif;
+height:100vh;display:flex;align-items:center;justify-content:center}
+.card{width:400px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:28px}
+.brand{display:flex;align-items:center;gap:8px;font-weight:700;font-size:17px;margin-bottom:6px}
+.brand .dot{width:11px;height:11px;border-radius:50%;background:var(--accent);box-shadow:0 0 10px var(--accent)}
+.sub{color:var(--dim);font-size:12px;margin-bottom:22px}
+label{display:block;font-size:12px;color:var(--dim);margin:12px 0 5px}
+input{width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:8px;
+color:var(--text);padding:9px 12px;font-size:14px;outline:none;font-family:inherit}
+input:focus{border-color:var(--accent)}
+input.code{font-family:"SF Mono",Menlo,monospace;letter-spacing:.5px;text-transform:uppercase}
+button{width:100%;margin-top:20px;padding:10px;border:none;border-radius:8px;
+background:linear-gradient(135deg,#2b6cb0,#3182ce);color:#fff;font-size:14px;font-weight:600;cursor:pointer}
+button:hover{filter:brightness(1.15)}
+button:disabled{opacity:.5}
+.msg{margin-top:12px;font-size:12px;border-radius:8px;padding:8px 12px;display:none}
+.msg.err{display:block;background:rgba(255,107,107,.1);border:1px solid rgba(255,107,107,.4);color:var(--err)}
+.msg.ok{display:block;background:rgba(77,216,138,.1);border:1px solid rgba(77,216,138,.4);color:var(--ok)}
+.hint{color:var(--dim);font-size:11px;margin-top:16px;text-align:center}
+.fp{color:var(--dim);font-size:11px;text-align:center;margin-top:8px;font-family:Menlo,monospace}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="brand"><span class="dot"></span>BiliParser</div>
+  <div class="sub">首次使用请输入激活码（一码一机，绑定当前设备）</div>
+
+  <label>授权服务器</label>
+  <input id="server" placeholder="https://lic.example.com" spellcheck="false">
+
+  <label>激活码</label>
+  <input id="code" class="code" placeholder="BP-XXXX-XXXX-XXXX-XXXX" spellcheck="false" maxlength="24">
+
+  <button id="go" onclick="doActivate()">激 活</button>
+  <div class="msg" id="msg"></div>
+
+  <div class="fp" id="fp"></div>
+  <div class="hint">激活遇到问题？联系卖家核对激活码或解绑旧设备</div>
+</div>
+<script>
+const $ = s => document.querySelector(s);
+fetch('/api/license/state').then(r=>r.json()).then(s=>{
+  if(s.server){ $('#server').value = s.server; $('#server').readOnly = true; }
+  $('#fp').textContent = '本机指纹：' + s.fingerprint;
+  if(s.activated){ location.href='/'; }  // 已激活被误跳转进来 → 回主页
+}).catch(()=>{});
+$('#code').addEventListener('keydown', e=>{ if(e.key==='Enter') doActivate(); });
+
+async function doActivate(){
+  const server=$('#server').value.trim(), code=$('#code').value.trim();
+  const msg=$('#msg'); msg.className='msg'; msg.textContent='';
+  if(!server||!code){ msg.className='msg err'; msg.textContent='请填服务器地址和激活码'; return; }
+  $('#go').disabled=true; msg.className='msg ok'; msg.textContent='激活中…';
+  try{
+    const r=await fetch('/api/license/activate',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({server,code})});
+    const d=await r.json();
+    if(!r.ok) throw new Error((d.error||'激活失败')+(d.hint?'\n'+d.hint:''));
+    msg.className='msg ok'; msg.textContent='✓ 激活成功，正在进入…';
+    setTimeout(()=>location.href='/', 600);
+  }catch(e){
+    msg.className='msg err'; msg.textContent=String(e.message||e);
+    $('#go').disabled=false;
+  }
+}
+</script>
+</body>
+</html>

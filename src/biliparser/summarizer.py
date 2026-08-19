@@ -25,7 +25,7 @@ SYSTEM_PROMPT = """你是专业的视频内容总结助手。用户会给你一�
 `关键词1` `关键词2` `关键词3` ...
 
 注意：章节时间线里的时间戳必须来自字幕原文，不要编造。
-开始前先核对：若字幕内容与视频标题/简介明显不属于同一主题（疑似 B 站字幕源串台），不要强行总结，直接输出「⚠ 字幕与视频内容不符（疑似字幕源错误）」并一句话说明字幕实际讲的是什么。直接输出总结正文，不要额外寒暄。"""
+若怀疑字幕与视频不同源（字幕讲的内容领域与标题/简介完全不同，如游戏解说配乡村 vlog），在总结最前面输出一行「⚠ 疑似字幕串台：字幕实际讲的是……」，然后照常输出总结（不要因此拒绝总结；标题与字幕只是侧重不同不算串台）。直接输出总结正文，不要额外寒暄。"""
 
 CHUNK_SYSTEM_PROMPT = (
     "你是视频内容总结助手。以下是长视频字幕的一部分，"
@@ -52,7 +52,7 @@ DETAILED_SYSTEM_PROMPT = """你是专业的视频内容详细总结助手。用�
 ## 金句摘录
 - `[mm:ss]` 「原文」（有记忆点的原话，3~6 条，没有就省略本节）
 
-直接输出正文，不要寒暄。开始前先核对：若字幕内容与视频标题/简介明显不属于同一主题（疑似 B 站字幕源串台），不要强行总结，直接输出「⚠ 字幕与视频内容不符（疑似字幕源错误）」并一句话说明字幕实际讲的是什么。"""
+直接输出正文，不要寒暄。若怀疑字幕与视频不同源（内容领域完全不同），在开头输出一行「⚠ 疑似字幕串台：字幕实际讲的是……」然后照常输出总结，不要拒绝总结。"""
 
 # 降级模式：拿不到字幕，只有元数据 + 热评
 META_SYSTEM_PROMPT = """你是视频内容总结助手。这次没有视频字幕，只有视频的公开信息（标题、简介、标签、数据）和热门评论。评论是观众视角，既有内容线索也有玩笑和噪音，请自行甄别。
@@ -78,6 +78,13 @@ class SummarizeError(Exception):
     def __init__(self, message: str, hint: str | None = None):
         super().__init__(message)
         self.hint = hint
+
+
+# 串台检测教训（2026-08，勿重蹈）：曾试过「LLM 语义校验字幕是否属于本视频」，
+# 两个致命伤：①只让模型吐一个字时它不给推理空间、几乎总答「是」；
+# ②放进主路径后 3 轮重拉 + 逐次校验把总结拖到 30s+。现行方案见
+# bilibili.fetch_full_subtitle：只做零耗时的确定性检查（字幕时长不得超视频、
+# 跨视频重复指纹、覆盖率），串台视频秒级失败，不拖慢正常视频。
 
 
 def _is_anthropic_endpoint(cfg) -> bool:
@@ -137,14 +144,49 @@ def _chat_anthropic(cfg, messages: list[dict]) -> str:
         raise SummarizeError(f"AI 返回格式异常：{resp.text[:200]}") from e
 
 
+def _chat_managed(cfg, messages: list[dict]) -> str:
+    """发行版模式：AI 调用经授权服务器代理（服务器持有 GLM key，按码限流）。"""
+    from . import licensing  # 延迟导入，CLI 直连模式不依赖
+
+    base = cfg.managed_server.rstrip("/")
+    try:
+        headers = licensing.auth_header()
+        resp = httpx.post(
+            base + "/api/ai/chat",
+            json={"messages": messages, "temperature": 0.3},
+            headers=headers, timeout=180,
+        )
+    except licensing.LicensingError as e:
+        raise SummarizeError(str(e), hint=e.hint) from e
+    except httpx.HTTPError as e:
+        raise SummarizeError(
+            f"连不上授权服务器（{e.__class__.__name__}）", hint="请检查网络后重试"
+        ) from e
+    if resp.status_code != 200:
+        try:
+            detail = resp.json().get("error") or resp.text[:200]
+            hint = resp.json().get("hint")
+        except ValueError:
+            detail, hint = resp.text[:200], None
+        if resp.status_code == 403:
+            hint = hint or "授权已失效，请重新激活"
+        raise SummarizeError(f"AI 调用失败：{detail}", hint=hint)
+    try:
+        return resp.json()["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, ValueError) as e:
+        raise SummarizeError(f"AI 返回格式异常：{resp.text[:200]}") from e
+
+
 def _chat(cfg, messages: list[dict]) -> str:
     """调一次对话接口；真限流时重试一次。
 
-    支持两种端点：OpenAI 兼容（paas/v4，默认）与 Anthropic 兼容
-    （base_url 以 /anthropic 结尾时自动切换协议）。
+    三种模式：授权服务器代理（cfg.managed_server 有值）> Anthropic 兼容
+    （base_url 以 /anthropic 结尾）> OpenAI 兼容（paas/v4，默认）。
     注意：智谱余额不足（错误码 1113）也返回 HTTP 429，不能重试，
     要把「请充值」透出给用户。
     """
+    if getattr(cfg, "managed_server", ""):
+        return _chat_managed(cfg, messages)
     if _is_anthropic_endpoint(cfg):
         return _chat_anthropic(cfg, messages)
 
