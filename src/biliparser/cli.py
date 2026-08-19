@@ -30,7 +30,7 @@ def build_argparser() -> argparse.ArgumentParser:
         description="B 站视频字幕提取与 AI 总结（输入视频链接或 BV 号）",
     )
     p.add_argument("url", help="视频链接或 BV 号")
-    p.add_argument("--page", type=int, default=1, metavar="N", help="分 P 序号，从 1 开始（默认 1）")
+    p.add_argument("--page", type=int, default=None, metavar="N", help="分 P 序号，从 1 开始（默认取链接里的 ?p=N，无则 1）")
     p.add_argument("--lang", default=None, help="指定字幕语言（如 zh-CN、ai_zh），默认自动选择")
     p.add_argument("--subtitle-only", action="store_true", help="只输出字幕全文，不调用 LLM")
     p.add_argument("--detailed", action="store_true", help="详尽版总结（不漏话题、保留具体数字与金句）")
@@ -56,25 +56,33 @@ def run(args: argparse.Namespace) -> int:
     owner = (info.get("owner") or {}).get("name", "未知")
     duration = info.get("duration", 0)
     pages = info.get("pages") or []
+    page_no = args.page or bilibili.parse_page(args.url) or 1
     if pages:
-        if not 1 <= args.page <= len(pages):
+        if not 1 <= page_no <= len(pages):
             raise bilibili.BiliError(
-                f"视频只有 {len(pages)} 个分 P，--page {args.page} 超出范围"
+                f"视频只有 {len(pages)} 个分 P，第 {page_no} P 超出范围"
             )
-        page = pages[args.page - 1]
+        page = pages[page_no - 1]
         cid = page["cid"]
         part = page.get("part") or title
     else:
         cid = info["cid"]
         part = title
-    page_tag = f"（P{args.page} {part}）" if len(pages) > 1 else ""
+    page_tag = f"（P{page_no} {part}）" if len(pages) > 1 else ""
     print(f"  {title} {page_tag}", flush=True)
     print(f"  UP 主：{owner}｜时长：{_fmt_duration(duration)}", flush=True)
 
-    print("→ 拉取字幕列表 …", flush=True)
-    sub_info = bilibili.get_subtitle_info(client, bvid, cid)
-    subs = sub_info.get("subtitles") or []
-    if not subs:
+    print("→ 拉取字幕 …", flush=True)
+    sub, lines, cov, consistent = bilibili.fetch_full_subtitle(
+        client, bvid, cid, duration, lang=args.lang
+    )
+    if sub is None and args.lang:
+        subs = bilibili.get_subtitle_info(client, bvid, cid).get("subtitles") or []
+        raise bilibili.BiliError(
+            f"找不到语言为 {args.lang} 的字幕",
+            hint=f"该视频可选：{'、'.join(subtitle.available_langs(subs))}" or "该视频无字幕",
+        )
+    if sub is None:
         # 未登录时 B 站静默返回空列表；用 nav 登录态区分两种原因
         logged_in = bilibili.is_logged_in(client)
         reason = "SESSDATA 未配置或已失效" if not logged_in else "该视频没有可用字幕"
@@ -110,20 +118,15 @@ def run(args: argparse.Namespace) -> int:
         )
         print(output)
     else:
-        sub = subtitle.pick_subtitle(subs, args.lang)
-        if sub is None:
-            raise bilibili.BiliError(
-                f"找不到语言为 {args.lang} 的字幕",
-                hint=f"该视频可选：{'、'.join(subtitle.available_langs(subs))}",
-            )
         print(f"  字幕源：{sub.get('lan_doc') or sub.get('lan')}", flush=True)
-
-        print("→ 下载字幕 …", flush=True)
-        lines = bilibili.download_subtitle(client, sub["subtitle_url"])
         if not lines:
             raise bilibili.BiliError("字幕文件内容为空")
+        if cov < 0.6:
+            print(f"  ⚠ 字幕仅覆盖视频 {cov:.0%}，可能截断，总结仅供参考", flush=True)
+        if not consistent:
+            print("  ⚠ 多次拉取的字幕内容不一致（B 站字幕源疑似串台），字幕可能不属于本视频，请核对", flush=True)
         transcript = subtitle.build_transcript(lines)
-        print(f"  共 {len(lines)} 行字幕，约 {len(transcript)} 字符", flush=True)
+        print(f"  共 {len(lines)} 行字幕，约 {len(transcript)} 字符（覆盖 {cov:.0%}）", flush=True)
 
         if args.subtitle_only:
             output = f"# {title} {page_tag}\n\n```\n{transcript}\n```\n"

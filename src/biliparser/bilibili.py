@@ -9,7 +9,7 @@ import time
 
 import httpx
 
-from . import wbi
+from . import subtitle, wbi
 
 API_BASE = "https://api.bilibili.com"
 UA = (
@@ -56,6 +56,7 @@ class BiliError(Exception):
 
 _BV_RE = re.compile(r"BV[0-9A-Za-z]{10}")
 _AV_RE = re.compile(r"\bav(\d+)", re.IGNORECASE)
+_PAGE_RE = re.compile(r"[?&]p=(\d+)")
 
 
 def parse_bvid(text: str) -> str:
@@ -79,6 +80,12 @@ def parse_bvid(text: str) -> str:
         f"无法从输入中解析出 BV 号：{text!r}",
         hint="示例输入：BV1GJ411x7h7 或 https://www.bilibili.com/video/BV1GJ411x7h7",
     )
+
+
+def parse_page(text: str) -> int | None:
+    """从 URL 里取 ?p=N 分 P 参数（如 …?p=2），没有则 None。"""
+    m = _PAGE_RE.search(text)
+    return int(m.group(1)) if m else None
 
 
 def make_client(sessdata: str) -> httpx.Client:
@@ -223,3 +230,58 @@ def download_subtitle(client: httpx.Client, subtitle_url: str) -> list[dict]:
     except httpx.HTTPError as e:
         raise BiliError(f"下载字幕失败：{e.__class__.__name__}") from e
     return resp.json().get("body") or []
+
+
+def fetch_full_subtitle(
+    client: httpx.Client, bvid: str, cid: int, duration: int = 0,
+    min_coverage: float = 0.8, rounds: int = 8, lang: str | None = None,
+) -> tuple[dict | None, list[dict], float]:
+    """挑「最完整」的一条字幕，返回 (sub, lines, coverage)。
+
+    2026-08 实测的坑，都在这里兜住：
+    1. 字幕列表多机返回不一致 → get_subtitle_info 内部已重试；
+    2. UP 上传的 CC 可能是残缺占位（实例：5 分钟视频只有 1 行 / 27 秒），
+       而同名 AI 字幕反而完整——不能只按语言优先级挑，要下载后按覆盖
+       时长比较，同分才按语言优先级（prioritize 顺序 + 严格大于）；
+    3. AI 字幕文件在 CDN 各节点版本不一（实测同视频新签名 URL 随机返回
+       1%~79% 的版本，疑似渐进生成/同步）——每轮重新取列表（新 URL）、
+       下载，跨轮保留最佳，直到覆盖率 ≥ min_coverage 或打满 rounds 轮。
+    4. 新发布视频的 AI 字幕有「串台期」：CDN 会返回完全不属于本视频的
+       字幕文件（实例 BV1HZgV6TEGm，标题是西游记解读，拉到的字幕分别
+       是 LoL 比赛解说和麦当劳复刻）。同一视频的合法版本首行应一致
+       （渐进生成只增不改），因此用「各次下载的首行指纹」做一致性检测，
+       不一致时 consistent=False，由调用方警告用户。
+
+    返回 (sub, lines, coverage, consistent)；
+    视频无字幕（或指定 lang 无匹配）返回 (None, [], 0, True)；
+    duration 未知时按行数比较、coverage 记 1.0。
+    """
+    best_sub, best_lines, best_cov = None, [], 0.0
+    fingerprints: set[str] = set()
+    for _ in range(rounds):
+        subs = get_subtitle_info(client, bvid, cid).get("subtitles") or []
+        if lang:
+            subs = [s for s in subs if s.get("lan") == lang]
+        if not subs:
+            break
+        for sub in subtitle.prioritize(subs):
+            try:
+                lines = download_subtitle(client, sub["subtitle_url"])
+            except BiliError:
+                continue
+            if not lines:
+                continue
+            first = next((str(l.get("content", "")).strip() for l in lines if str(l.get("content", "")).strip()), "")
+            if first:
+                fingerprints.add(first)
+            if duration:
+                cov = min(max(l.get("to") or 0 for l in lines) / duration, 1.0)
+            else:
+                cov = 1.0
+            score = cov if duration else float(len(lines))
+            if score > (best_cov if duration else len(best_lines)):
+                best_sub, best_lines, best_cov = sub, lines, cov
+        if best_lines and (not duration or best_cov >= min_coverage):
+            break
+        time.sleep(0.15)
+    return best_sub, best_lines, (best_cov if duration else 1.0), len(fingerprints) <= 1

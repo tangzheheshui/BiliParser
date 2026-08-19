@@ -24,7 +24,8 @@ SYSTEM_PROMPT = """你是专业的视频内容总结助手。用户会给你一�
 ## 关键词
 `关键词1` `关键词2` `关键词3` ...
 
-注意：章节时间线里的时间戳必须来自字幕原文，不要编造。直接输出总结正文，不要额外寒暄。"""
+注意：章节时间线里的时间戳必须来自字幕原文，不要编造。
+开始前先核对：若字幕内容与视频标题/简介明显不属于同一主题（疑似 B 站字幕源串台），不要强行总结，直接输出「⚠ 字幕与视频内容不符（疑似字幕源错误）」并一句话说明字幕实际讲的是什么。直接输出总结正文，不要额外寒暄。"""
 
 CHUNK_SYSTEM_PROMPT = (
     "你是视频内容总结助手。以下是长视频字幕的一部分，"
@@ -51,7 +52,7 @@ DETAILED_SYSTEM_PROMPT = """你是专业的视频内容详细总结助手。用�
 ## 金句摘录
 - `[mm:ss]` 「原文」（有记忆点的原话，3~6 条，没有就省略本节）
 
-直接输出正文，不要寒暄。"""
+直接输出正文，不要寒暄。开始前先核对：若字幕内容与视频标题/简介明显不属于同一主题（疑似 B 站字幕源串台），不要强行总结，直接输出「⚠ 字幕与视频内容不符（疑似字幕源错误）」并一句话说明字幕实际讲的是什么。"""
 
 # 降级模式：拿不到字幕，只有元数据 + 热评
 META_SYSTEM_PROMPT = """你是视频内容总结助手。这次没有视频字幕，只有视频的公开信息（标题、简介、标签、数据）和热门评论。评论是观众视角，既有内容线索也有玩笑和噪音，请自行甄别。
@@ -205,13 +206,8 @@ def summarize_meta(meta_context: str, video_title: str, cfg) -> str:
     )
 
 
-def summarize(transcript: str, video_title: str, cfg, detailed: bool = False) -> str:
-    """字幕 → Markdown 总结。超长字幕分块提取要点后合并。
-
-    detailed=True 用详尽版 prompt（--detailed）：不漏话题、保留具体数字，
-    长 Video 分块时 map 步骤不变，最终 reduce 用详尽模板。
-    """
-    final_prompt = DETAILED_SYSTEM_PROMPT if detailed else SYSTEM_PROMPT
+def _summarize_with(transcript: str, video_title: str, cfg, final_prompt: str) -> str:
+    """字幕 → Markdown：短字幕单次调用，长字幕 map-reduce 后合并。"""
     if len(transcript) <= MAX_CHARS:
         return _chat(
             cfg,
@@ -249,3 +245,14 @@ def summarize(transcript: str, video_title: str, cfg, detailed: bool = False) ->
             },
         ],
     )
+
+
+def summarize(transcript: str, video_title: str, cfg, detailed: bool = False) -> str:
+    """字幕 → Markdown 总结（标准 / 详尽模板）。"""
+    prompt = DETAILED_SYSTEM_PROMPT if detailed else SYSTEM_PROMPT
+    return _summarize_with(transcript, video_title, cfg, prompt)
+
+
+def summarize_custom(transcript: str, video_title: str, cfg, system_prompt: str) -> str:
+    """字幕 → 用户自定义提示词的总结（Web 工作台自定义模板）。"""
+    return _summarize_with(transcript, video_title, cfg, system_prompt)

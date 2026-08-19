@@ -5,11 +5,17 @@ from biliparser.subtitle import (
     build_transcript,
     format_ts,
     pick_subtitle,
+    prioritize,
 )
 
 
 def _sub(lan, **kw):
     return {"lan": lan, "lan_doc": kw.pop("lan_doc", lan), "subtitle_url": "//x/y.json", **kw}
+
+
+def test_prioritize_order():
+    subs = [_sub("en"), _sub("ai-zh"), _sub("zh-Hans"), _sub("zh-Hant")]
+    assert [s["lan"] for s in prioritize(subs)] == ["zh-Hans", "ai-zh", "zh-Hant", "en"]
 
 
 def test_cc_preferred_over_ai():

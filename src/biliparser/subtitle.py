@@ -4,10 +4,23 @@
 _PRIORITY = ["zh-CN", "zh-Hans", "ai_zh", "ai-zh"]
 
 
+def prioritize(subtitles: list[dict]) -> list[dict]:
+    """按优先级排序（不过滤）：zh-CN/zh-Hans > ai_zh/ai-zh > 其他中文 > 其余。"""
+    def key(s):
+        lan = str(s.get("lan", ""))
+        for i, want in enumerate(_PRIORITY):
+            if lan == want:
+                return (0, i)
+        return (0, len(_PRIORITY)) if lan.startswith("zh") else (1, len(_PRIORITY))
+    return sorted(subtitles, key=key)
+
+
 def pick_subtitle(subtitles: list[dict], lang: str | None = None) -> dict | None:
     """按优先级挑一条字幕；显式指定 lang 时精确匹配 lan 字段。
 
     找不到返回 None，由调用方给出「可选语言列表」提示。
+    注意：本函数只看语言不看完整性——多条字幕时建议用
+    bilibili.fetch_full_subtitle() 按覆盖时长挑选。
     """
     if not subtitles:
         return None
@@ -16,14 +29,7 @@ def pick_subtitle(subtitles: list[dict], lang: str | None = None) -> dict | None
             if s.get("lan") == lang:
                 return s
         return None
-    for want in _PRIORITY:
-        for s in subtitles:
-            if s.get("lan") == want:
-                return s
-    for s in subtitles:  # 其他中文变体（zh-Hant 等）
-        if str(s.get("lan", "")).startswith("zh"):
-            return s
-    return subtitles[0]  # 实在没有中文，退而求其次
+    return prioritize(subtitles)[0]
 
 
 def available_langs(subtitles: list[dict]) -> list[str]:

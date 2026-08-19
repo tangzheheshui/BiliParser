@@ -62,6 +62,16 @@ uv run biliparse BV1xx411c7mD --lang ai_zh
 
 只配 `glm.api_key` 不配 `sessdata` 也能用：此时拿不到字幕，工具会自动拉取公开的标签和热门评论，让 AI 输出**推断性**总结（一句话总结 / 核心要点 / 评论区看点 / 关键词）。配好 `sessdata` 后自动回到完整字幕总结。
 
+## Web 工作台
+
+```bash
+uv run biliparse-web            # http://127.0.0.1:7842
+```
+
+三栏工作区：左侧操作按钮与配置状态，中间视频链接与预览，右侧文本分析
+（原始字幕 / 标准总结 / 详尽总结 / 元数据+热评 四个页签，支持复制与导出 .md）。
+零新依赖（标准库起服务 + 单文件前端），需求与设计见 [docs/web-workspace.md](docs/web-workspace.md)。
+
 ## 开发
 
 ```bash

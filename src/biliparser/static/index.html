@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BiliParser 工作台</title>
+<style>
+:root{
+  --bg:#101418; --panel:#171d24; --panel2:#1d2530; --line:#2a3542;
+  --text:#dce4ee; --dim:#8b98a8; --accent:#4da3ff; --accent2:#7ec8ff;
+  --ok:#4dd88a; --warn:#ffb454; --err:#ff6b6b; --mono:"SF Mono",Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font:14px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;height:100vh;overflow:hidden}
+#app{display:grid;grid-template-columns:250px minmax(320px,34%) 1fr;height:100vh}
+.col{overflow-y:auto;border-right:1px solid var(--line)}
+#left{display:flex;flex-direction:column;overflow:hidden}
+#left>.pane{flex:1;display:flex;flex-direction:column;min-height:0;overflow-y:auto}
+.col:last-child{border-right:none;display:flex;flex-direction:column;overflow:hidden}
+.pane{padding:14px}
+
+/* 左栏 */
+.brand{display:flex;align-items:center;gap:8px;font-weight:700;font-size:16px;padding:14px 16px;border-bottom:1px solid var(--line)}
+.brand .dot{width:10px;height:10px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent)}
+.sec-title{font-size:11px;color:var(--dim);letter-spacing:.12em;margin:14px 0 8px;text-transform:uppercase}
+.btn{display:block;width:100%;text-align:left;padding:8px 12px;margin-bottom:7px;border:1px solid var(--line);
+  border-radius:8px;background:var(--panel2);color:var(--text);cursor:pointer;font-size:13px;transition:.15s}
+.btn:hover:not(:disabled){border-color:var(--accent);color:var(--accent2)}
+.btn:disabled{opacity:.35;cursor:not-allowed}
+.btn.primary{background:linear-gradient(135deg,#2b6cb0,#3182ce);border-color:transparent;color:#fff;font-weight:600}
+.btn.primary:hover:not(:disabled){filter:brightness(1.15)}
+.btn .sub{display:block;font-size:11px;color:var(--dim);font-weight:400;margin-top:2px}
+.btn.primary .sub{color:#cfe8ff}
+.status-card{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:12px}
+.status-card .row{display:flex;justify-content:space-between;padding:3px 0;color:var(--dim)}
+.status-card .row b{color:var(--text);font-weight:500}
+.badge{padding:1px 8px;border-radius:10px;font-size:11px}
+.badge.ok{background:rgba(77,216,138,.15);color:var(--ok)}
+.badge.no{background:rgba(255,107,107,.15);color:var(--err)}
+
+/* 模板列表 */
+.gensel{width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--text);
+  padding:8px 10px;font-size:13px;outline:none;cursor:pointer}
+.gensel:focus{border-color:var(--accent)}
+.ptpl{display:flex;align-items:center;gap:4px;margin-bottom:6px}
+.ptpl .nm{flex:1;padding:7px 10px;border:1px solid var(--line);border-radius:8px;
+  background:var(--panel2);color:var(--text);font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ptpl .ico{border:none;background:none;color:var(--dim);cursor:pointer;font-size:12px;padding:4px}
+.ptpl .ico:hover{color:var(--accent2)}
+#peditor{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px;margin:8px 0}
+#peditor input,#peditor textarea{width:100%;background:var(--panel);border:1px solid var(--line);border-radius:6px;
+  color:var(--text);padding:6px 8px;font-size:12px;outline:none;margin-bottom:6px}
+#peditor textarea{height:110px;resize:vertical;font-family:var(--mono);line-height:1.5}
+#peditor input:focus,#peditor textarea:focus{border-color:var(--accent)}
+#peditor .acts{display:flex;gap:6px}
+#peditor .acts button{flex:1;border:none;border-radius:6px;padding:6px;cursor:pointer;font-size:12px}
+#psave{background:linear-gradient(135deg,#2b6cb0,#3182ce);color:#fff;font-weight:600}
+#pcancel{background:var(--panel);color:var(--dim);border:1px solid var(--line)!important}
+.empty-hint{color:var(--dim);font-size:12px;padding:4px 2px}
+
+/* 中栏 */
+#mid{display:flex;flex-direction:column}
+.urlbar{display:flex;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line)}
+#url{flex:1;background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--text);
+  padding:8px 12px;font-size:13px;outline:none;min-width:0}
+#url:focus{border-color:var(--accent)}
+#go{padding:0 18px;border-radius:8px;border:none;background:linear-gradient(135deg,#2b6cb0,#3182ce);color:#fff;font-weight:600;cursor:pointer}
+#go:hover{filter:brightness(1.15)}
+#go:disabled{opacity:.5}
+#vtabs{display:flex;flex-wrap:wrap;gap:6px;padding:10px 14px 0;flex:none}
+.vtab{display:flex;align-items:center;gap:6px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;
+  padding:5px 10px;font-size:12.5px;color:var(--dim);cursor:pointer;white-space:nowrap;max-width:260px}
+.vtab.active{border-color:var(--accent);color:var(--accent2);background:rgba(77,163,255,.08)}
+.vtab span{overflow:hidden;text-overflow:ellipsis;max-width:200px}
+.vtab .x{border:none;background:none;color:var(--dim);cursor:pointer;font-size:11px;padding:0 2px}
+.vtab .x:hover{color:var(--err)}
+.player-wrap{margin:12px 14px;border-radius:10px;overflow:hidden;border:1px solid var(--line);
+  aspect-ratio:16/9;background:#000;display:flex;align-items:center;justify-content:center;color:var(--dim);font-size:13px;flex:none}
+.player-wrap iframe{width:100%;height:100%;border:none}
+.vinfo{padding:0 14px 14px}
+.vinfo h2{font-size:16px;line-height:1.45;margin-bottom:6px}
+.vinfo .owner{color:var(--accent2);font-size:13px}
+.vinfo .dur{color:var(--dim);font-size:12px;margin-left:8px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
+.chip{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:1px 10px;font-size:11px;color:var(--dim)}
+.chip.stat b{color:var(--text);font-weight:600}
+#pagesel{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:6px;padding:3px 8px;font-size:12px;margin-left:8px;max-width:220px}
+.desc{color:var(--dim);font-size:12px;white-space:pre-wrap}
+
+/* 右栏 */
+#tabs{display:flex;border-bottom:1px solid var(--line);background:var(--panel);flex:none;overflow-x:auto;scrollbar-width:thin}
+.tab{padding:11px 16px;font-size:13px;color:var(--dim);cursor:pointer;border-bottom:2px solid transparent;user-select:none;white-space:nowrap}
+.tab:hover{color:var(--text)}
+.tab.active{color:var(--accent2);border-bottom-color:var(--accent)}
+.tab .n{display:none;font-size:10px;background:var(--ok);color:#0c130f;border-radius:8px;padding:0 5px;margin-left:5px;vertical-align:1px}
+.tab .n.show{display:inline}
+.tab.custom-tab{border-top:2px solid transparent}
+#toolbar{display:flex;gap:8px;align-items:center;padding:8px 16px;border-bottom:1px solid var(--line);flex:none;min-height:40px}
+#state{flex:1;font-size:12px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#state.busy{color:var(--accent2)}
+#state.err{color:var(--err)}
+.tbtn{background:var(--panel2);border:1px solid var(--line);border-radius:6px;color:var(--dim);padding:3px 12px;font-size:12px;cursor:pointer;flex:none}
+.tbtn:hover{color:var(--accent2);border-color:var(--accent)}
+#content{flex:1;overflow-y:auto;padding:18px 22px}
+.empty{color:var(--dim);text-align:center;margin-top:40vh;font-size:13px}
+.hint-box{background:rgba(255,180,84,.08);border:1px solid rgba(255,180,84,.35);border-radius:8px;padding:8px 12px;color:var(--warn);font-size:12px;margin-bottom:12px}
+.err-box{background:rgba(255,107,107,.1);border:1px solid rgba(255,107,107,.4);border-radius:8px;padding:8px 12px;color:var(--err);font-size:12px;margin-bottom:12px}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px}
+
+/* Markdown 渲染 */
+.md h2{font-size:16px;margin:20px 0 8px;color:var(--accent2);padding-bottom:4px;border-bottom:1px solid var(--line)}
+.md h2:first-child{margin-top:0}
+.md h3{font-size:14px;margin:14px 0 6px;color:var(--text)}
+.md p{margin:8px 0}
+.md ul{margin:6px 0;padding-left:20px}
+.md li{margin:4px 0}
+.md code{background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:0 5px;font-family:var(--mono);font-size:12px;color:var(--warn)}
+.md strong{color:var(--accent2)}
+.md blockquote{border-left:3px solid var(--accent);padding-left:12px;color:var(--dim);margin:8px 0}
+.md hr{border:none;border-top:1px solid var(--line);margin:14px 0}
+.transcript{font-family:var(--mono);font-size:12.5px;line-height:1.9;white-space:pre-wrap;word-break:break-all}
+.ts{color:var(--accent);background:rgba(77,163,255,.1);border-radius:4px;padding:0 3px;cursor:pointer}
+.ts:hover{background:rgba(77,163,255,.3)}
+code.tsj{color:var(--accent)!important;cursor:pointer}
+code.tsj:hover{background:rgba(77,163,255,.3);border-color:var(--accent)!important}
+pre.raw{font-family:var(--mono);font-size:12.5px;white-space:pre-wrap;word-break:break-all;color:var(--text)}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- 左：操作区 -->
+  <div class="col" id="left">
+    <div class="brand"><span class="dot"></span>BiliParser 工作台</div>
+    <div class="pane">
+      <div class="sec-title">生成类型</div>
+      <select id="gen-type" class="gensel"></select>
+      <button class="btn primary" id="b-gen" disabled style="margin-top:8px">⏵ 生成文本<span class="sub">结果进入右侧对应页签</span></button>
+
+      <div class="sec-title">自定义模板</div>
+      <div id="plist"><div class="empty-hint">（暂无模板，点下方新建）</div></div>
+      <button class="btn" id="pnew">＋ 新建模板<span class="sub">自定义提示词，保存后可反复使用</span></button>
+      <div id="peditor" style="display:none">
+        <input id="pname" placeholder="模板名称（如：小红书风格 / 三句话版）" maxlength="20">
+        <textarea id="ptext" placeholder="提示词：告诉 AI 这份总结要怎么写、什么结构、什么风格。&#10;例如：请把视频内容改写成一篇 200 字以内的微博，语气轻松，结尾带一个话题标签。"></textarea>
+        <div class="acts">
+          <button id="psave">保存</button>
+          <button id="pcancel">取消</button>
+        </div>
+      </div>
+
+      <div class="sec-title" style="margin-top:auto;padding-top:14px">配置状态</div>
+      <div class="status-card" id="status">加载中…</div>
+    </div>
+  </div>
+
+  <!-- 中：链接与预览（多视频页签） -->
+  <div class="col" id="mid">
+    <div class="urlbar">
+      <input id="url" placeholder="粘贴链接或 BV 号（可一次贴多个，空格/换行分隔），回车加入" spellcheck="false">
+      <button id="go">加入</button>
+    </div>
+    <div id="vtabs"></div>
+    <div class="player-wrap" id="player">解析视频后在此预览</div>
+    <div class="vinfo" id="vinfo">
+      <div style="color:var(--dim);text-align:center;margin-top:30px;font-size:13px">
+        输入 B 站链接 → 解析 → 左侧生成字幕与总结<br><br>
+        可连续解析多个视频，页签之间随时切换，内容互不干扰
+      </div>
+    </div>
+  </div>
+
+  <!-- 右：文本分析区 -->
+  <div class="col">
+    <div id="tabs"></div>
+    <div id="toolbar">
+      <div id="state"></div>
+      <button class="tbtn" id="copy">复制</button>
+      <button class="tbtn" id="export">导出 .md</button>
+      <button class="tbtn" id="clear">清空</button>
+    </div>
+    <div id="content"><div class="empty">尚未生成内容</div></div>
+  </div>
+
+</div>
+<script>
+const $ = s => document.querySelector(s);
+
+/* ---------- 全局状态：多工作区 + 自定义模板 ---------- */
+const workspaces = new Map();   // bvid → ws
+let cur = null;                 // 当前 bvid
+let prompts = [];               // [{id,name,prompt}]
+let editingPid = null;          // 正在编辑的模板 id（null=新建）
+let busy = false;
+
+const FIXED_TABS = [
+  {id:'subtitle', label:'原始字幕'},
+  {id:'standard', label:'标准总结'},
+  {id:'detailed', label:'详尽总结'},
+  {id:'meta',     label:'元数据+热评'},
+];
+
+function ws(){ return cur ? workspaces.get(cur) : null }
+function newWs(d){ return {video:d, tabs:{subtitle:null,standard:null,detailed:null,meta:null}, custom:{}, metaAI:null, active:'subtitle'} }
+
+/* ---------- 极简 Markdown 渲染 ---------- */
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+function inlineMd(s){
+  return esc(s)
+    .replace(/`([^`]+)`/g,'<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g,'<a href="$2" target="_blank">$1</a>');
+}
+function renderMd(md){
+  const out=[]; let list=null;
+  const flush=()=>{ if(list){out.push('</ul>');list=null} };
+  for(const raw of md.split('\n')){
+    const line=raw.replace(/\s+$/,'');
+    if(!line.trim()){flush();continue}
+    let m;
+    if(m=line.match(/^(#{1,3})\s+(.*)/)){flush();const h=m[1].length+1;out.push(`<h${h}>${inlineMd(m[2])}</h${h}>`)}
+    else if(m=line.match(/^\s*[-*]\s+(.*)/)){if(!list){out.push('<ul>');list=1}out.push(`<li>${inlineMd(m[1])}</li>`)}
+    else if(/^(-{3,}|\*{3,})$/.test(line.trim())){flush();out.push('<hr>')}
+    else {flush();out.push(`<p>${inlineMd(line)}</p>`)}
+  }
+  flush(); return out.join('\n');
+}
+function renderTranscript(text){
+  return '<div class="transcript">'+esc(text).replace(/\[(\d{1,2}:\d{2}(?::\d{2})?)\]/g,'<span class="ts">[$1]</span>')+'</div>';
+}
+
+/* ---------- UI 基础 ---------- */
+function setState(msg, cls){const el=$('#state');el.textContent=msg||'';el.className=cls||''}
+function setContent(html){
+  $('#content').innerHTML=html||'<div class="empty">尚未生成内容</div>';
+  // 总结里的独立时间戳 code（章节时间线）也做成可点击
+  document.querySelectorAll('#content code').forEach(el=>{
+    if(/^\[?\d{1,2}:\d{2}(?::\d{2})?\]?$/.test(el.textContent))el.classList.add('tsj');
+  });
+}
+function toast(msg){setState(msg,'');setTimeout(()=>{if($('#state').textContent===msg)setState('')},2500)}
+async function api(path, body, method){
+  const r=await fetch(path,{method:method||(body?'POST':'GET'),headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});
+  const d=await r.json();
+  if(!r.ok) throw new Error((d.error||'请求失败')+(d.hint?`\n${d.hint}`:''));
+  return d;
+}
+function guard(fn){return async(...a)=>{ if(busy||!ws())return; busy=true; refreshButtons(true);
+  try{await fn(...a)}catch(e){setState(String(e.message||e),'err')}
+  finally{busy=false;refreshButtons()}}}
+function fmtDur(s){s=s|0;const h=s/3600|0,m=(s%3600)/60|0,x=s%60;return h?`${h}:${String(m).padStart(2,'0')}:${String(x).padStart(2,'0')}`:`${m}:${String(x).padStart(2,'0')}`}
+
+/* ---------- 解析与工作区切换 ---------- */
+$('#go').onclick=parse; $('#url').addEventListener('keydown',e=>{if(e.key==='Enter')parse()});
+async function parse(){
+  const raw=$('#url').value.trim(); if(!raw)return;
+  // 支持一次贴多个链接（空格/逗号/换行分隔），逐个加入工作区
+  const urls=raw.split(/[\s,，、;；]+/).filter(Boolean);
+  busy=true;$('#go').disabled=true;setState(`解析中…（0/${urls.length}）`,'busy');
+  const added=[]; let lastErr=null;
+  for(let i=0;i<urls.length;i++){
+    setState(`解析中…（${i+1}/${urls.length}）`,'busy');
+    try{
+      const d=await api('/api/parse',{url:urls[i]});
+      if(workspaces.has(d.bvid)) workspaces.get(d.bvid).video=d;
+      else workspaces.set(d.bvid, newWs(d));
+      added.push(d);
+    }catch(e){lastErr=e}
+  }
+  busy=false;$('#go').disabled=false;refreshButtons();
+  if(added.length){
+    $('#url').value='';                       // 清空输入框：明示「已加入」
+    switchTo(added[added.length-1].bvid);     // 切到最后加入的
+    setState(`✓ 已加入 ${added.length} 个视频：${added.map(d=>shortTitle(d.title)).join('、')}`);
+  }else{
+    setState(String(lastErr&&lastErr.message||lastErr||'解析失败'),'err');
+  }
+}
+
+function switchTo(bvid){
+  cur=bvid;
+  renderVtabs(); renderMiddle(); renderTabbar(); showTab(ws().active); refreshButtons();
+}
+
+function renderVtabs(){
+  $('#vtabs').innerHTML=[...workspaces.entries()].map(([b,w])=>`
+    <div class="vtab ${b===cur?'active':''}" data-b="${b}">
+      <span title="${esc(w.video.title)}">${esc(shortTitle(w.video.title))}</span>
+      <button class="x" data-close="${b}" title="关闭">✕</button>
+    </div>`).join('');
+  $('#vtabs').querySelectorAll('.vtab').forEach(el=>el.onclick=e=>{
+    if(e.target.dataset.close)return;
+    switchTo(el.dataset.b);
+  });
+  $('#vtabs').querySelectorAll('.x').forEach(el=>el.onclick=e=>{
+    e.stopPropagation();
+    const b=el.dataset.close;
+    workspaces.delete(b);
+    if(cur===b) switchTo([...workspaces.keys()][0]||resetAll());
+    else renderVtabs();
+  });
+}
+function shortTitle(t){return t.length>14?t.slice(0,14)+'…':t}
+function resetAll(){
+  cur=null;
+  $('#player').innerHTML='解析视频后在此预览';
+  $('#vinfo').innerHTML='<div style="color:var(--dim);text-align:center;margin-top:30px;font-size:13px">工作区已清空，输入链接开始</div>';
+  renderVtabs(); renderTabbar(); setContent('<div class="empty">尚未生成内容</div>'); refreshButtons();
+  return null;
+}
+
+function playerSrc(d, t){
+  return `https://player.bilibili.com/player.html?bvid=${d.bvid}&page=${d.page||1}${t!=null?`&t=${t}&autoplay=1`:'&autoplay=0'}&danmaku=0&high_quality=1`;
+}
+function tsToSec(t){const p=t.split(':').map(Number);return p.length===3?p[0]*3600+p[1]*60+p[2]:p[0]*60+p[1]}
+function seekTo(sec){
+  const d=ws().video;
+  $('#player').innerHTML=`<iframe src="${playerSrc(d,sec)}" allow="autoplay; fullscreen" allowfullscreen></iframe>`;
+  toast(`▶ 从 ${fmtDur(sec)} 播放`);
+}
+/* 点击字幕/总结里的时间戳 → 跳转播放 */
+$('#content').addEventListener('click',e=>{
+  const el=e.target.closest('.ts,.tsj'); if(!el||!ws())return;
+  const m=el.textContent.match(/(\d{1,2}:\d{2}(?::\d{2})?)/); if(m)seekTo(tsToSec(m[1]));
+});
+
+function renderMiddle(){
+  const w=ws(); if(!w)return;
+  const d=w.video;
+  $('#player').innerHTML=`<iframe src="${playerSrc(d)}" allow="autoplay; fullscreen" allowfullscreen></iframe>`;
+  const nf=n=>n>=10000?(n/10000).toFixed(1)+' 万':String(n??0);
+  const stats=[['▶',d.stats.view],['👍',d.stats.like],['硬币',d.stats.coin],['弹幕',d.stats.danmaku],['收藏',d.stats.favorite]]
+    .map(([k,v])=>`<span class="chip stat">${k} <b>${nf(v)}</b></span>`).join('');
+  const tags=(d.tags||[]).map(t=>`<span class="chip">#${t}</span>`).join('');
+  const pages=d.pages.length>1
+    ?`<select id="pagesel">${d.pages.map(p=>`<option value="${p.page}" ${p.page===d.page?'selected':''}>P${p.page} ${p.part}</option>`).join('')}</select>`:'';
+  $('#vinfo').innerHTML=`
+    <h2>${esc(d.title)} ${pages}</h2>
+    <div><span class="owner">${esc(d.owner)}</span><span class="dur">⏱ ${fmtDur(d.duration)}｜${d.bvid}</span></div>
+    <div class="chips">${stats}</div>
+    <div class="chips">${tags||''}</div>
+    ${d.desc?`<div class="desc">${esc(d.desc)}</div>`:''}`;
+  const sel=$('#pagesel');
+  if(sel)sel.onchange=async()=>{ $('#url').value=ws().video.bvid; await parse(); };
+}
+
+/* ---------- 生成类型：下拉 + 派发 ---------- */
+const PRESETS=[
+  {v:'standard',label:'标准总结（要点/时间线/关键词）'},
+  {v:'detailed',label:'详尽总结（不漏话题/数据/金句）'},
+  {v:'subtitle',label:'拉取字幕（不花 LLM）'},
+  {v:'meta',label:'元数据 + 热评（不花 LLM）'},
+  {v:'metaai',label:'降级 AI 总结（无字幕时推断）'},
+];
+function renderTypeSelect(){
+  const sel=$('#gen-type'); const keep=sel.value||'standard';
+  sel.innerHTML='<optgroup label="预设">'+PRESETS.map(p=>`<option value="${p.v}">${p.label}</option>`).join('')+'</optgroup>'
+    +(prompts.length?'<optgroup label="自定义模板">'+prompts.map(p=>`<option value="custom:${p.id}">${esc(p.name)}</option>`).join('')+'</optgroup>':'');
+  sel.value=[...sel.options].some(o=>o.value===keep)?keep:'standard';
+}
+$('#b-gen').onclick=guard(async()=>{
+  const v=$('#gen-type').value;
+  if(v==='subtitle'){
+    setState('拉取字幕中…（B 站接口不稳定，可能重试）','busy');
+    const d=await api('/api/subtitle',{url:cur,page:ws().video.page});
+    ws().tabs.subtitle=d.transcript; ws().covSubtitle=d.coverage; ws().subConsistent=d.consistent!==false;
+    renderTabbar(); showTab('subtitle'); setState(`✓ ${d.lines} 行字幕（${d.lan}）`);
+  }else if(v==='standard'||v==='detailed'){
+    setState(`AI ${v==='standard'?'标准':'详尽'}总结中…`,'busy');
+    const d=await api('/api/summarize',{url:cur,page:ws().video.page,mode:v});
+    ws().tabs[v]=d.markdown; renderTabbar(); showTab(v); setState(`✓ ${v==='standard'?'标准':'详尽'}总结完成`);
+  }else if(v==='meta'){
+    setState('拉取标签与热评中…','busy');
+    const d=await api('/api/meta',{url:cur});
+    ws().tabs.meta=d.context; renderTabbar(); showTab('meta'); setState('✓ 元数据已更新');
+  }else if(v==='metaai'){
+    setState('AI 降级总结中…','busy');
+    const d=await api('/api/summarize',{url:cur,mode:'meta'});
+    ws().metaAI=d.markdown; showTab('meta'); setState('✓ 降级总结完成');
+  }else if(v.startsWith('custom:')){
+    const id=v.slice(7), p=prompts.find(x=>x.id===id);
+    if(!p)return toast('模板不存在，请重新选择');
+    setState(`AI「${p.name}」生成中…`,'busy');
+    const d=await api('/api/summarize',{url:cur,page:ws().video.page,mode:'custom',prompt_id:id});
+    ws().custom[id]=d.markdown; renderTabbar(); showTab('custom:'+id); setState(`✓「${p.name}」完成`);
+  }
+});
+
+/* ---------- 自定义模板 ---------- */
+function renderPlist(){
+  const el=$('#plist');
+  if(!prompts.length){el.innerHTML='<div class="empty-hint">（暂无模板，点下方新建；建好后会出现在上方下拉里）</div>';return}
+  el.innerHTML=prompts.map(p=>`
+    <div class="ptpl" data-id="${p.id}">
+      <div class="nm" title="${esc(p.prompt)}">${esc(p.name)}</div>
+      <button class="ico edit" title="编辑">✎</button>
+      <button class="ico del" title="删除">✕</button>
+    </div>`).join('');
+  el.querySelectorAll('.ptpl').forEach(row=>{
+    const id=row.dataset.id;
+    row.querySelector('.edit').onclick=()=>openEditor(id);
+    row.querySelector('.del').onclick=async()=>{
+      if(!confirm('删除模板「'+prompts.find(x=>x.id===id).name+'」？'))return;
+      await api('/api/prompts/'+id,null,'DELETE'); await loadPrompts(); renderPlist(); renderTypeSelect();
+      toast('已删除');
+    };
+  });
+}
+$('#pnew').onclick=()=>openEditor(null);
+function openEditor(id){
+  editingPid=id;
+  const p=id?prompts.find(x=>x.id===id):null;
+  $('#pname').value=p?p.name:'';
+  $('#ptext').value=p?p.prompt:'';
+  $('#peditor').style.display='block'; $('#pname').focus();
+}
+$('#pcancel').onclick=()=>{$('#peditor').style.display='none'};
+$('#psave').onclick=async()=>{
+  const name=$('#pname').value.trim(), text=$('#ptext').value.trim();
+  if(!name||!text)return toast('名称和提示词都要填');
+  const saved=await api('/api/prompts',{id:editingPid,name,prompt:text});
+  $('#peditor').style.display='none';
+  await loadPrompts(); renderPlist(); renderTypeSelect();
+  $('#gen-type').value='custom:'+saved.id;   // 保存后直接选中，顺手就能生成
+  toast('已保存并选中');
+};
+async function loadPrompts(){
+  try{prompts=(await api('/api/prompts')).prompts}catch(e){prompts=[]}
+}
+
+/* ---------- 右侧页签（内置 + 自定义动态） ---------- */
+function renderTabbar(){
+  const w=ws();
+  const fixed=FIXED_TABS.map(t=>{
+    const done=!!(w&&w.tabs[t.id])||(t.id==='meta'&&w&&w.metaAI);
+    return `<div class="tab ${w&&w.active===t.id?'active':''}" data-t="${t.id}">${t.label}<span class="n ${done?'show':''}">✓</span></div>`;
+  }).join('');
+  const customs=w?Object.entries(w.custom).map(([id,md])=>{
+    const p=prompts.find(x=>x.id===id);
+    return `<div class="tab custom-tab ${w.active==='custom:'+id?'active':''}" data-t="custom:${id}">★ ${esc(p?p.name:id)}<span class="n show">✓</span></div>`;
+  }).join(''):'';
+  $('#tabs').innerHTML=fixed+customs||'<div class="tab" style="cursor:default">先解析一个视频</div>';
+  $('#tabs').querySelectorAll('.tab[data-t]').forEach(el=>el.onclick=()=>showTab(el.dataset.t));
+}
+
+function showTab(t){
+  const w=ws(); if(!w){setContent('<div class="empty">先解析一个视频</div>');return}
+  w.active=t; renderTabbar();
+  if(t.startsWith('custom:')){
+    const id=t.slice(7), md=w.custom[id];
+    const p=prompts.find(x=>x.id===id);
+    setContent(md?`<div class="hint-box">模板：${esc(p?p.prompt:'')}</div><div class="md">${renderMd(md)}</div>`
+      :'<div class="empty">内容不存在（模板可能已删除）</div>');
+    return;
+  }
+  if(t==='subtitle'){
+    if(!w.tabs.subtitle){setContent('<div class="empty">在左侧选择「拉取字幕」生成</div>')}
+    else{
+      const crossWarn=w.subConsistent===false
+        ?'<div class="err-box">⚠ 多次拉取的字幕内容不一致——B 站字幕源疑似串台，这份字幕可能不属于本视频！总结前请先核对内容</div>':'';
+      const warn=w.covSubtitle!=null&&w.covSubtitle<0.6
+        ?`<div class="hint-box">⚠ 此字幕仅覆盖视频 ${Math.round(w.covSubtitle*100)}%（可能截断），基于它的总结会缺内容</div>`:'';
+      setContent(crossWarn+warn+renderTranscript(w.tabs.subtitle));
+    }
+  }else if(t==='meta'){
+    if(!w.tabs.meta&&!w.metaAI){setContent('<div class="empty">点击左侧「元数据 + 热评」或「降级 AI 总结」</div>');return}
+    let html='';
+    if(w.metaAI) html+=`<div class="hint-box">以下为推断性总结（基于元数据+热评，非字幕）</div><div class="md">${renderMd(w.metaAI)}</div><hr style="border:none;border-top:1px solid var(--line);margin:16px 0">`;
+    if(w.tabs.meta) html+=`<div class="sec-title">原始材料</div><pre class="raw">${esc(w.tabs.meta)}</pre>`;
+    setContent(html);
+  }else{
+    setContent(w.tabs[t]?`<div class="md">${renderMd(w.tabs[t])}</div>`
+      :`<div class="empty">点击左侧「${t==='standard'?'标准总结':'详尽总结'}」</div>`);
+  }
+}
+
+/* ---------- 工具栏 ---------- */
+function activeRaw(){
+  const w=ws(); if(!w)return null;
+  if(w.active.startsWith('custom:'))return w.custom[w.active.slice(7)];
+  if(w.active==='meta')return [w.metaAI,w.tabs.meta].filter(Boolean).join('\n\n---\n\n')||null;
+  return w.tabs[w.active];
+}
+$('#copy').onclick=async()=>{
+  const raw=activeRaw(); if(!raw)return toast('当前无内容');
+  await navigator.clipboard.writeText(raw); toast('已复制到剪贴板');
+};
+$('#export').onclick=()=>{
+  const w=ws(); if(!w)return toast('先解析一个视频');
+  const raw=activeRaw(); if(!raw)return toast('当前无内容');
+  const v=w.video;
+  const doc=`# ${v.title}\n\n- UP 主：${v.owner}\n- 链接：https://www.bilibili.com/video/${v.bvid}\n- 时长：${fmtDur(v.duration)}\n\n---\n\n${raw}\n`;
+  let name=v.bvid;
+  if(w.active==='subtitle')name+='-字幕';
+  else if(w.active==='detailed')name+='-详细';
+  else if(w.active==='meta')name+='-元数据';
+  else if(w.active.startsWith('custom:')){
+    const p=prompts.find(x=>x.id===w.active.slice(7)); name+='-'+(p?p.name:'自定义');
+  }
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([doc],{type:'text/markdown'}));
+  a.download=name+'.md'; a.click(); URL.revokeObjectURL(a.href);
+  toast('已导出 '+name+'.md');
+};
+$('#clear').onclick=()=>{
+  const w=ws(); if(!w)return toast('先解析一个视频');
+  if(w.active.startsWith('custom:'))delete w.custom[w.active.slice(7)];
+  else if(w.active==='meta')w.metaAI=null;
+  else w.tabs[w.active]=null;
+  renderTabbar(); showTab(w.active); toast('已清空当前页');
+};
+
+/* ---------- 配置状态 & 启动 ---------- */
+async function loadStatus(){
+  try{
+    const d=await api('/api/status');
+    $('#status').innerHTML=`
+      <div class="row"><span>SESSDATA</span><span class="badge ${d.sessdata_configured?'ok':'no'}">${d.sessdata_configured?'已配置':'未配置'}</span></div>
+      <div class="row"><span>GLM Key</span><span class="badge ${d.glm_key_configured?'ok':'no'}">${d.glm_key_configured?'已配置':'未配置'}</span></div>
+      <div class="row"><span>模型</span><b>${esc(d.model)}</b></div>
+      <div class="row"><span>端点</span><b>${d.endpoint==='anthropic'?'Anthropic 兼容':'OpenAI 兼容'}</b></div>`;
+  }catch(e){$('#status').textContent='状态获取失败：'+e.message}
+}
+function refreshButtons(forceDisable){
+  $('#b-gen').disabled=!(ws()&&!forceDisable);
+}
+loadStatus(); loadPrompts().then(()=>{renderPlist();renderTypeSelect();}); renderTabbar();
+</script>
+</body>
+</html>
