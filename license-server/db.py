@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS licenses (
     activated_at TEXT,
     expires_at TEXT,               -- ISO 时间；NULL = 永久
     is_active INTEGER DEFAULT 1,
-    daily_quota INTEGER DEFAULT 50,
+    daily_quota INTEGER DEFAULT 100,
     unbind_count INTEGER DEFAULT 0,
     created_at TEXT DEFAULT (datetime('now'))
 );

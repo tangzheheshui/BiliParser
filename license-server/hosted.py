@@ -230,6 +230,7 @@ def create_app(
             "config_path": "网页版：配置存服务端（按激活码）",
             "sessdata_configured": bool(_sessdata(row["id"])),
             "glm_key_configured": bool(api),
+            "provider": (api["label"] if api else "") or "",
             "model": (api["model"] if api else "") or "",
             "base_url": "",
             "endpoint": "openai",

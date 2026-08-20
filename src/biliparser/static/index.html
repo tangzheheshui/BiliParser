@@ -37,6 +37,9 @@ body{background:var(--bg);color:var(--text);font:14px/1.6 -apple-system,"PingFan
 #settings .save{background:linear-gradient(135deg,#2b6cb0,#3182ce);color:#fff;font-weight:600}
 #settings .cancel{background:var(--panel2);color:var(--dim);border:1px solid var(--line)!important}
 #settings .note{color:var(--dim);font-size:11px;margin-top:10px}
+#ai-cfg{display:flex;gap:6px;align-items:center}
+#ai-cfg select{flex:0 0 118px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--text);padding:8px 10px;font-size:13px;outline:none}
+#ai-cfg input{flex:1;min-width:0}
 .sec-title{font-size:11px;color:var(--dim);letter-spacing:.12em;margin:14px 0 8px;text-transform:uppercase}
 .btn{display:block;width:100%;text-align:left;padding:8px 12px;margin-bottom:7px;border:1px solid var(--line);
   border-radius:8px;background:var(--panel2);color:var(--text);cursor:pointer;font-size:13px;transition:.15s}
@@ -226,9 +229,9 @@ pre.raw{font-family:var(--mono);font-size:12.5px;white-space:pre-wrap;word-break
 <div id="loginGate" hidden>
   <div class="card">
     <h3>BiliParser 网页版</h3>
-    <div class="sub">输入激活码登录（与桌面版通用，共享每日 AI 配额）</div>
+    <div class="sub">输入激活码激活</div>
     <input id="lg-code" placeholder="BP-XXXX-XXXX-XXXX-XXXX" spellcheck="false" autocomplete="off">
-    <div class="acts"><button class="save" id="lg-go">登录</button></div>
+    <div class="acts"><button class="save" id="lg-go">激活</button></div>
     <div class="note" id="lg-err"></div>
   </div>
 </div>
@@ -237,26 +240,31 @@ pre.raw{font-family:var(--mono);font-size:12.5px;white-space:pre-wrap;word-break
 <div id="settings">
   <div class="card">
     <h3>设置</h3>
-    <div class="sub">保存在本机 <span id="cfgpath"></span>，桌面版无需手改文件</div>
-    <label>B 站 SESSDATA（可选，填了能解锁 AI 字幕）</label>
-    <input id="set-sessdata" placeholder="浏览器 F12 → 应用 → Cookie → SESSDATA" spellcheck="false">
-    <div class="note" style="margin:4px 0 12px">嫌翻 Cookie 麻烦？把「<a id="bm" href="#" title="按住拖到浏览器书签栏">一键复制 SESSDATA</a>」拖进书签栏，以后在 bilibili.com 页面点一下书签自动复制，回来粘贴即可。</div>
-    <label>授权服务器（留空 = 直连模式，本地配 GLM key）</label>
-    <input id="set-server" placeholder="https://lic.example.com" spellcheck="false">
+    <div class="sub">配置保存在 <span id="cfgpath"></span></div>
+
     <div id="ai-cfg">
-      <label>AI 提供商 + API Key（总结必需，用你自己的 key）</label>
       <select id="set-provider">
-        <option value="">— 选择提供商 —</option>
-        <option value="zhipu">智谱 GLM（open.bigmodel.cn）</option>
-        <option value="deepseek">DeepSeek（api.deepseek.com）</option>
+        <option value="">— 提供商 —</option>
+        <option value="zhipu">智谱 GLM</option>
+        <option value="deepseek">DeepSeek</option>
       </select>
-      <input id="set-apikey" placeholder="粘贴你的 API Key（留空 = 不修改）" spellcheck="false">
+      <input id="set-apikey" placeholder="API Key（总结必需）" spellcheck="false">
     </div>
+
+    <label>B 站 SESSDATA（可选，填了能解锁 AI 字幕）</label>
+    <input id="set-sessdata" placeholder="粘贴 SESSDATA" spellcheck="false">
+    <div class="note">获取：把「<a id="bm" href="#" title="拖到书签栏">一键复制</a>」拖进书签栏，在 bilibili.com 点一下自动复制；或 F12 → 应用 → Cookie 手动复制。</div>
+
+    <div id="server-cfg" style="display:none">
+      <label>授权服务器（留空 = 直连模式）</label>
+      <input id="set-server" placeholder="https://lic.example.com" spellcheck="false">
+    </div>
+
     <div class="acts">
       <button class="cancel" onclick="$('#settings').classList.remove('show')">取消</button>
       <button class="save" id="set-save">保存</button>
     </div>
-    <div class="note">改动 SESSDATA 后建议重新拉取字幕。设置授权服务器后重启应用生效激活流程。</div>
+    <div class="note">改动 SESSDATA 后建议重新拉取字幕。</div>
   </div>
 </div>
 <script>
@@ -668,19 +676,23 @@ async function loadStatus(){
   try{
     const d=await api('/api/status');
     const lic=license||{};
-    let licRow='';
-    if(lic.server){
+    let head='';
+    if(d.hosted){
+      // 网页版：激活码授权 + 买家自配 AI key
+      head=`
+      <div class="row"><span>授权</span><span class="badge ok">已激活</span></div>
+      <div class="row"><span>AI 提供商</span><span class="badge ${d.glm_key_configured?'ok':'no'}">${d.provider||'未配置'}</span></div>`;
+    }else if(lic.server){
+      // 桌面版发行模式：服务器代理 + 每日配额
       const u=lic.usage;
-      licRow=`
+      head=`
       <div class="row"><span>授权</span><span class="badge ${lic.activated?'ok':'no'}">${lic.activated?(lic.online?'已激活':'离线宽限'):'未激活'}</span></div>
-      ${u?`<div class="row"><span>今日 AI</span><b>${u.today_used}/${u.daily_quota}</b></div>`:''}
-      <div class="row"><span>AI 通道</span><b>服务器代理</b></div>`;
+      ${u?`<div class="row"><span>今日 AI</span><b>${u.today_used}/${u.daily_quota}</b></div>`:''}`;
     }
     $('#status').innerHTML=`
-      ${licRow}
+      ${head}
       <div class="row"><span>SESSDATA</span><span class="badge ${d.sessdata_configured?'ok':'no'}">${d.sessdata_configured?'已配置':'未配置'}</span></div>
-      ${lic.server?'':`<div class="row"><span>GLM Key</span><span class="badge ${d.glm_key_configured?'ok':'no'}">${d.glm_key_configured?'已配置':'未配置'}</span></div>`}
-      <div class="row"><span>模型</span><b>${esc(lic.server?'服务器端控制':d.model)}</b></div>`;
+      ${(d.hosted||lic.server)?'':`<div class="row"><span>GLM Key</span><span class="badge ${d.glm_key_configured?'ok':'no'}">${d.glm_key_configured?'已配置':'未配置'}</span></div>`}`;
   }catch(e){$('#status').textContent='状态获取失败：'+e.message}
 }
 
@@ -736,7 +748,7 @@ function refreshButtons(forceDisable){
 })();
 async function loginGo(){
   const code=$('#lg-code').value.trim(); if(!code)return;
-  $('#lg-err').textContent='登录中…';
+  $('#lg-err').textContent='激活中…';
   try{ await api('/api/login',{code}); location.reload(); }
   catch(e){ $('#lg-err').textContent=String(e.message||e).split('\n')[0]; }
 }

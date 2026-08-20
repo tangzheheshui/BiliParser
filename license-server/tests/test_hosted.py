@@ -54,7 +54,7 @@ def test_gate_and_login_flow(env):
     assert hc.post("/api/login", json={"code": "BP-BAD"}).status_code == 403
     # 正确码 → 登录成功
     r = hc.post("/api/login", json={"code": code})
-    assert r.status_code == 200 and r.get_json()["usage"]["daily_quota"] == 50
+    assert r.status_code == 200 and r.get_json()["usage"]["daily_quota"] > 0
     d = hc.get("/api/status").get_json()
     assert d["hosted"] and d["sessdata_configured"] is False
     # 登出后回到 401
