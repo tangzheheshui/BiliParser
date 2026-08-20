@@ -272,15 +272,16 @@ def create_app(
 
     @app.get("/download/<path:fname>")
     def site_download(fname: str):
+        from flask import send_file
+
         base = Path(app.config["DOWNLOADS_DIR"]).resolve()
         target = (Path(app.config["DOWNLOADS_DIR"]) / fname).resolve()
         if base not in target.parents or not target.is_file():  # 防路径穿越
             return err("文件不存在", 404)
-        return app.response_class(
-            target.read_bytes(),
-            mimetype="application/octet-stream",
-            headers={"Content-Disposition": f'attachment; filename="{target.name}"'},
-        )
+        # send_file 流式分块发送：大安装包不会占满内存，慢客户端也不会
+        # 因 worker 长时间无响应被杀（实测整读内存版会导致下载中断）
+        return send_file(target, as_attachment=True, download_name=target.name,
+                         mimetype="application/octet-stream")
 
     # ---------------- 管理后台 ----------------
 
