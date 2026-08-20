@@ -253,7 +253,7 @@ pre.raw{font-family:var(--mono);font-size:12.5px;white-space:pre-wrap;word-break
 
     <label>B 站 SESSDATA（可选，填了能解锁 AI 字幕）</label>
     <input id="set-sessdata" placeholder="粘贴 SESSDATA" spellcheck="false">
-    <div class="note">获取：把「<a id="bm" href="#" title="拖到书签栏">一键复制</a>」拖进书签栏，在 bilibili.com 点一下自动复制；或 F12 → 应用 → Cookie 手动复制。</div>
+    <div class="note">获取：浏览器登录 bilibili.com → F12 → 「应用」标签 → 左侧 Cookie → bilibili.com → 复制 SESSDATA 那一行的「值」。</div>
 
     <div id="server-cfg" style="display:none">
       <label>授权服务器（留空 = 直连模式）</label>
@@ -507,6 +507,7 @@ $('#b-gen').onclick=guard(async()=>{
     const d=await api('/api/summarize',{url:cur,page:ws().video.page,mode:v});
     ws().tabs[v]=stripMindmap(d.markdown);
     ws().tabs.mindmap=d.mindmap||null;
+    ws().fallback=d.fallback||null;
     renderTabbar(); showTab(v); setState(`✓ ${v==='standard'?'标准':'详尽'}总结完成（含思维导图）`);
   }else if(v==='meta'){
     setState('拉取标签与热评中…','busy');
@@ -612,7 +613,10 @@ function showTab(t){
     if(!w.tabs.mindmap){setContent('<div class="empty">先点击左侧「标准总结」或「详尽总结」——思维导图随总结一起产出</div>')}
     else setContent('<div class="hint-box">思维导图（随总结自动生成，节点可折叠）</div>'+renderTree(w.tabs.mindmap));
   }else{
-    setContent(w.tabs[t]?`<div class="md">${renderMd(w.tabs[t])}</div>`
+    let warn='';
+    if(w.fallback==='conclusion') warn='<div class="hint-box">⚠ 该视频无可用字幕，以下为 B 站官方 AI 总结（非逐字字幕）</div>';
+    else if(w.fallback==='meta') warn='<div class="err-box">⚠ 该视频无字幕，以下为推断性总结（质量有限）。配置 SESSDATA 可获得完整字幕总结</div>';
+    setContent(w.tabs[t]?warn+`<div class="md">${renderMd(w.tabs[t])}</div>`
       :`<div class="empty">点击左侧「${t==='standard'?'标准总结':'详尽总结'}」</div>`);
   }
 }
@@ -713,7 +717,7 @@ $('#gear').onclick=async()=>{
     $('#set-sessdata').dataset.configured=d.sessdata_configured?'1':'';
     $('#set-server').value=d.managed_server||'';
     $('#set-provider').value=d.provider||'';
-    $('#set-apikey').value='';
+    $('#set-apikey').value=d.api_key_configured?'（已配置，留空保持不变）':'';
   }catch(e){}
   // 网页版才显示 AI 提供商/key 配置；桌面版直连走 config 文件
   try{ const s=await api('/api/status'); $('#ai-cfg').style.display=s.hosted?'':'none'; }
@@ -729,7 +733,7 @@ $('#set-save').onclick=async()=>{
   const prov=$('#set-provider').value;
   if(prov) body.provider=prov;
   const ak=$('#set-apikey').value.trim();
-  if(ak) body.api_key=ak;
+  if(ak && !ak.startsWith('（')) body.api_key=ak;   // 占位提示文字不提交
   if(!Object.keys(body).length){ $('#settings').classList.remove('show'); return toast('没有改动'); }
   try{
     await api('/api/config/save',body);
@@ -754,9 +758,6 @@ async function loginGo(){
 }
 $('#lg-go').onclick=loginGo;
 $('#lg-code').addEventListener('keydown',e=>{ if(e.key==='Enter')loginGo(); });
-/* 书签脚本：在 bilibili.com 页点一下，自动复制 SESSDATA（读用户自己浏览器里的 cookie，不出本机） */
-const BM='javascript:(function(){var m=document.cookie.match(/(?:^|;\\s*)SESSDATA=([^;]+)/);if(!m){alert("未找到 SESSDATA：请先登录 bilibili.com");return;}var t=document.createElement("textarea");t.value=m[1];document.body.appendChild(t);t.select();try{document.execCommand("copy");alert("SESSDATA 已复制！回 BiliParser 设置里粘贴");}catch(e){prompt("请手动复制（Ctrl+C）：",m[1]);}document.body.removeChild(t);})()';
-$('#bm').href=BM;
 loadPrompts().then(()=>{renderPlist();renderTypeSelect();}); renderTabbar();
 </script>
 </body>
