@@ -234,3 +234,22 @@ def test_admin_export_only_unactivated(client):
     codes = r.get_data(as_text=True).strip().split("\n")
     assert len(codes) == 2 and all(c.startswith("BP-") for c in codes)
     assert client.get("/admin/export").status_code == 403  # 无 key 拒绝
+
+
+# ---------- 官网与安装包分发 ----------
+
+def test_site_index_and_download(client, tmp_path):
+    downloads = tmp_path / "dl"
+    downloads.mkdir()
+    (downloads / "BiliParser-macOS.dmg").write_bytes(b"fake-dmg")
+    (downloads / "version.json").write_text('{"version":"v9"}')
+    client.application.config["DOWNLOADS_DIR"] = str(downloads)
+
+    r = client.get("/")
+    assert r.status_code == 200 and "BiliParser" in r.get_data(as_text=True)
+    r = client.get("/download/BiliParser-macOS.dmg")
+    assert r.status_code == 200 and r.data == b"fake-dmg"
+    assert r.headers["Content-Disposition"].startswith("attachment")
+    assert client.get("/download/version.json").status_code == 200
+    assert client.get("/download/nope.exe").status_code == 404
+    assert client.get("/download/../app.py").status_code in (404, 403)  # 防穿越

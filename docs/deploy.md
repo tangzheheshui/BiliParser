@@ -165,3 +165,26 @@ WantedBy=multi-user.target
 安全组再放行 `TCP 7842`，用户访问 `http://服务器IP:7842` 输激活码登录。
 注意：网页版所有用户的 B 站请求都从本机 IP 出去，规模大时有风控风险
 （见 docs/licensing.md「网页版」一节）。
+
+## 10. 官网与安装包分发（同机自带）
+
+授权服务器本身就是你的官网：`/` 是下载页（`static-site/index.html`），
+`/download/<文件>` 下发安装包（`downloads/` 目录，不入 git）。
+
+上架安装包：
+
+```bash
+# Windows 包只能由 CI 构建：打 tag 触发（.github/workflows/release.yml）
+git tag v0.1.0 && git push origin v0.1.0     # CI 出 Release（构建用，用户不接触 GitHub）
+
+# 把产物搬到你的服务器（mac 包本机也能出：bash packaging/build-macos.sh）
+SERVER=user@vps bash packaging/sync-to-server.sh          # 从 Release 拉
+SERVER=user@vps bash packaging/sync-to-server.sh local    # 或用本机 dist/
+```
+
+同步后用户可见：
+
+- 官网：`https://你的域名/`（下载按钮自动高亮访客系统、显示最新版本号）
+- 直链：`https://你的域名/download/BiliParser-macOS.dmg`、`.../BiliParser-Setup-Windows.exe`
+
+路线 A（裸 IP）同理：`http://IP:7900/download/...`。

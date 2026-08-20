@@ -19,6 +19,7 @@ import os
 import secrets
 import sqlite3
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import httpx
 from flask import Flask, g, jsonify, redirect, render_template, request
@@ -74,6 +75,7 @@ def create_app(
     glm_base_url: str | None = None,
     glm_model: str | None = None,
 ) -> Flask:
+    here = Path(__file__).resolve().parent
     app = Flask(__name__)
     app.config.update(
         DB_PATH=db_path or os.environ.get("LICENSE_DB", "licenses.db"),
@@ -82,6 +84,8 @@ def create_app(
         GLM_API_KEY=glm_api_key or os.environ.get("GLM_API_KEY", ""),
         GLM_BASE_URL=glm_base_url or os.environ.get("GLM_BASE_URL", "https://open.bigmodel.cn/api/paas/v4/"),
         GLM_MODEL=glm_model or os.environ.get("GLM_MODEL", "glm-4-flash"),
+        SITE_DIR=str(here / "static-site"),      # 官网下载页
+        DOWNLOADS_DIR=os.environ.get("DOWNLOADS_DIR", str(here / "downloads")),  # 安装包目录
     )
 
     def db() -> sqlite3.Connection:
@@ -254,6 +258,29 @@ def create_app(
             db().commit()
         return app.response_class(resp.text, status=resp.status_code,
                                   mimetype="application/json")
+
+    # ---------------- 官网与安装包分发 ----------------
+    # 你的网站 = 授权服务器本身：/ 官网下载页，/download/<文件> 安装包。
+    # 安装包不入 git，由 packaging/sync-to-server.sh 同步到 downloads/ 目录。
+
+    @app.get("/")
+    def site_index():
+        page = Path(app.config["SITE_DIR"]) / "index.html"
+        if not page.exists():
+            return err(f"官网页面缺失：{page}", 500)
+        return app.response_class(page.read_bytes(), mimetype="text/html; charset=utf-8")
+
+    @app.get("/download/<path:fname>")
+    def site_download(fname: str):
+        base = Path(app.config["DOWNLOADS_DIR"]).resolve()
+        target = (Path(app.config["DOWNLOADS_DIR"]) / fname).resolve()
+        if base not in target.parents or not target.is_file():  # 防路径穿越
+            return err("文件不存在", 404)
+        return app.response_class(
+            target.read_bytes(),
+            mimetype="application/octet-stream",
+            headers={"Content-Disposition": f'attachment; filename="{target.name}"'},
+        )
 
     # ---------------- 管理后台 ----------------
 

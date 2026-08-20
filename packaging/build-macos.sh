@@ -24,11 +24,21 @@ rm -rf build dist
 .venv/bin/pyinstaller packaging/biliparser.spec --noconfirm --clean
 
 APP="dist/BiliParser.app"
-if [ -d "$APP" ]; then
-  echo "[OK] 打包完成: $APP ($(du -sh "$APP" | cut -f1))"
-  echo "     双击运行, 或: open $APP"
-  rm -f "$DIST_SERVER_FILE"
-else
+if [ ! -d "$APP" ]; then
   echo "[FAIL] 打包失败" >&2
   exit 1
 fi
+echo "[OK] 打包完成: $APP ($(du -sh "$APP" | cut -f1))"
+
+# 封装 DMG（拖入 Applications 的标准 mac 分发格式；hdiutil 系统自带）
+DMG="dist/BiliParser.dmg"
+rm -f "$DMG"
+STAGING="dist/dmg-staging"
+rm -rf "$STAGING" && mkdir -p "$STAGING"
+cp -R "$APP" "$STAGING/"
+ln -s /Applications "$STAGING/Applications"
+hdiutil create -volname "BiliParser" -srcfolder "$STAGING" -ov -format UDZO "$DMG" >/dev/null
+rm -rf "$STAGING"
+echo "[OK] DMG 完成: $DMG ($(du -sh "$DMG" | cut -f1))"
+echo "     双击安装（拖入 Applications）, 或: open $DMG"
+rm -f "$DIST_SERVER_FILE"
