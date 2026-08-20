@@ -95,3 +95,20 @@ def test_disabled_code_kicks_session(env):
     lid = re.search(r'name="id" value="(\d+)"', html).group(1)
     lc.post("/admin/action", data={"key": "k", "id": lid, "op": "toggle"})
     assert hc.get("/api/status").status_code == 403
+
+
+def test_web_session_limit(env):
+    """一码最多 2 个网页会话，第 3 个登录挤掉最早那个（防共享）。"""
+    app = env["hc"].application
+    code = env["code"]
+    c1, c2 = app.test_client(), app.test_client()
+    assert c1.post("/api/login", json={"code": code}).status_code == 200
+    assert c2.post("/api/login", json={"code": code}).status_code == 200
+    assert c1.get("/api/status").status_code == 200
+    assert c2.get("/api/status").status_code == 200
+    # 第 3 个会话登录 → 挤掉最早（c1），c2 仍有效
+    c3 = app.test_client()
+    assert c3.post("/api/login", json={"code": code}).status_code == 200
+    assert c3.get("/api/status").status_code == 200
+    assert c1.get("/api/status").status_code == 401
+    assert c2.get("/api/status").status_code == 200

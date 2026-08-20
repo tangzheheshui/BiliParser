@@ -12,6 +12,7 @@
 
 import hashlib
 import os
+import secrets
 import sys
 import threading
 import time
@@ -38,6 +39,9 @@ class ApiError(Exception):
         super().__init__(message)
         self.hint = hint
         self.status = status
+
+
+MAX_WEB_SESSIONS = 2  # 一个激活码同时最多 2 个网页会话，防共享
 
 
 def _utcnow() -> datetime:
@@ -74,7 +78,7 @@ def create_app(
     @app.before_request
     def _gate():
         p = request.path
-        if p in ("/", "/favicon.ico", "/api/login"):
+        if p in ("/", "/favicon.ico", "/api/login", "/api/logout"):
             return None
         if not session.get("token"):
             return _err("未登录", 401, hint="请输入激活码登录")
@@ -93,6 +97,19 @@ def create_app(
             raise ApiError("激活码已被禁用", status=403, hint="如有疑问请联系卖家")
         if row["expires_at"] and row["expires_at"] <= _utcnow().isoformat():
             raise ApiError("激活码已过期", status=403)
+        # 会话校验：被踢下线（sid 不在表里，因他人在别处登录挤掉了）则要求重新登录
+        sid = session.get("sid")
+        if sid:
+            s = db().execute(
+                "SELECT sid FROM web_sessions WHERE license_id=? AND sid=?", (license_id, sid)
+            ).fetchone()
+            if not s:
+                session.clear()
+                raise ApiError("该激活码已在其他设备登录", status=401,
+                               hint="同时在线数已达上限，请重新登录")
+            db().execute("UPDATE web_sessions SET last_seen=? WHERE license_id=? AND sid=?",
+                         (_utcnow().isoformat(), license_id, sid))
+            db().commit()
         g.lid = license_id
         return row
 
@@ -154,10 +171,31 @@ def create_app(
         session["lid"] = d["license_id"]
         session["token"] = d["token"]
         session.permanent = True
+        # 会话限制：一码最多 MAX_WEB_SESSIONS 个活跃会话，超过踢最老（防共享）
+        sid = secrets.token_hex(16)
+        session["sid"] = sid
+        lid = d["license_id"]
+        now = _utcnow().isoformat()
+        cutoff = (_utcnow() - timedelta(days=30)).isoformat()
+        db().execute("DELETE FROM web_sessions WHERE license_id=? AND last_seen < ?", (lid, cutoff))
+        old = db().execute(
+            "SELECT sid FROM web_sessions WHERE license_id=? ORDER BY created_at DESC", (lid,)
+        ).fetchall()
+        for r in old[MAX_WEB_SESSIONS - 1:]:  # 新会话占 1 个，只留最新的 N-1 个旧的
+            db().execute("DELETE FROM web_sessions WHERE license_id=? AND sid=?", (lid, r["sid"]))
+        db().execute(
+            "INSERT INTO web_sessions (license_id, sid, created_at, last_seen) VALUES (?,?,?,?)",
+            (lid, sid, now, now),
+        )
+        db().commit()
         return jsonify({"success": True, "usage": d.get("usage")})
 
     @app.post("/api/logout")
     def logout():
+        sid, lid = session.get("sid"), session.get("lid")
+        if sid and lid:
+            db().execute("DELETE FROM web_sessions WHERE license_id=? AND sid=?", (lid, sid))
+            db().commit()
         session.clear()
         return jsonify({"success": True})
 

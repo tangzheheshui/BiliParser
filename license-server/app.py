@@ -267,6 +267,18 @@ def create_app(
             return err("管理密钥错误", 403)
         return render_template("admin.html", rows=_all_rows(db()), key=app.config["ADMIN_KEY"])
 
+    @app.get("/admin/export")
+    def admin_export():
+        """导出未激活码（纯文本一行一个），导入发卡平台用。"""
+        if not _admin_ok():
+            return err("管理密钥错误", 403)
+        rows = db().execute(
+            "SELECT code FROM licenses WHERE device_fingerprint IS NULL AND is_active=1 "
+            "ORDER BY id DESC"
+        ).fetchall()
+        codes = "\n".join(r["code"] for r in rows)
+        return app.response_class(codes, mimetype="text/plain; charset=utf-8")
+
     @app.post("/admin/generate")
     def admin_generate():
         if not _admin_ok():

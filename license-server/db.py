@@ -1,4 +1,4 @@
-"""SQLite 访问层：licenses + usage 两张表。"""
+"""SQLite 访问层：licenses / usage / user_secrets / prompts / web_sessions。"""
 
 import sqlite3
 from pathlib import Path
@@ -36,6 +36,14 @@ CREATE TABLE IF NOT EXISTS prompts (
     name TEXT NOT NULL,
     prompt TEXT NOT NULL,
     PRIMARY KEY (license_id, id)
+);
+
+CREATE TABLE IF NOT EXISTS web_sessions (
+    license_id INTEGER NOT NULL REFERENCES licenses(id),
+    sid TEXT NOT NULL,             -- 网页会话 id（登录时发，限并发防共享）
+    created_at TEXT,
+    last_seen TEXT,
+    PRIMARY KEY (license_id, sid)
 );
 """
 

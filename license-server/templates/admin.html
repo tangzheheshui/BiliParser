@@ -30,6 +30,7 @@ button{cursor:pointer}
     有效期 <input name="days" placeholder="天数，留空=永久" size="12">
     <button type="submit">生成激活码</button>
   </form>
+  <a href="/admin/export?key={{ key }}">导出未激活码（txt，导入发卡平台）</a>
 </div>
 
 {% if generated %}

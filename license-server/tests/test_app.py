@@ -223,3 +223,14 @@ def test_web_login_ok_and_quota_shared(client, monkeypatch):
 
 def test_web_login_bad_code(client):
     assert _web_login(client, "BP-NOPE").status_code == 403
+
+
+def test_admin_export_only_unactivated(client):
+    """导出只含未激活码，已绑设备的码不导出（防把卖过的码再卖给新买家）。"""
+    _gen(client, count=3)
+    _activate(client, _first_code(client), "MAC-1")  # 激活 1 个
+    r = client.get("/admin/export?key=admin-key")
+    assert r.status_code == 200 and r.mimetype.startswith("text/plain")
+    codes = r.get_data(as_text=True).strip().split("\n")
+    assert len(codes) == 2 and all(c.startswith("BP-") for c in codes)
+    assert client.get("/admin/export").status_code == 403  # 无 key 拒绝
