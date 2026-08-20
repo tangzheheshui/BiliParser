@@ -157,11 +157,18 @@ pre.raw{font-family:var(--mono);font-size:12.5px;white-space:pre-wrap;word-break
 .tree li.collapsed>.tw:before{content:'▸'}
 .tree .tn{display:inline-block;padding:2px 9px;border:1px solid var(--line);border-radius:6px;background:var(--panel2);color:var(--text);font-size:13px;margin:1px 0;vertical-align:middle}
 /* ---------- 网页版登录门（托管模式未登录时显示；本地直连版不触发） ---------- */
-#loginGate{position:fixed;inset:0;background:rgba(15,18,24,.55);display:flex;align-items:center;justify-content:center;z-index:99}
+#loginGate{position:fixed;inset:0;background:rgba(8,10,14,.72);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;z-index:99}
 #loginGate[hidden]{display:none}
-#loginGate .card{width:340px;max-width:92vw;text-align:center}
-#lg-code{width:100%;box-sizing:border-box;font:14px/1.4 ui-monospace,monospace}
-#lg-err{color:#c0392b;font-size:12px;min-height:18px}
+#loginGate .lg-card{width:360px;max-width:92vw;background:linear-gradient(180deg,#1a2230,#141a23);border:1px solid var(--line);border-radius:18px;padding:36px 30px;text-align:center;box-shadow:0 24px 60px rgba(0,0,0,.55)}
+.lg-logo{font-size:42px;line-height:1;margin-bottom:10px;background:linear-gradient(135deg,#4da3ff,#7ec8ff);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.lg-title{font-size:22px;font-weight:700;letter-spacing:.5px}
+.lg-desc{color:var(--dim);font-size:13px;margin:6px 0 26px}
+#lg-code{width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:10px;color:var(--text);padding:12px;font:16px/1.4 ui-monospace,monospace;text-align:center;letter-spacing:1px;outline:none;transition:.15s}
+#lg-code:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(77,163,255,.15)}
+#lg-go{width:100%;margin-top:12px;padding:12px;border:none;border-radius:10px;background:linear-gradient(135deg,#2b6cb0,#3182ce);color:#fff;font-size:15px;font-weight:600;cursor:pointer;transition:.15s}
+#lg-go:hover{filter:brightness(1.1)}
+#lg-err{color:var(--err);font-size:12px;min-height:18px;margin-top:10px}
+.lg-foot{color:var(--dim);font-size:11px;margin-top:18px;opacity:.7}
 </style>
 </head>
 <body>
@@ -225,14 +232,16 @@ pre.raw{font-family:var(--mono);font-size:12.5px;white-space:pre-wrap;word-break
 
 </div>
 
-<!-- 网页版登录门：托管模式未登录时显示 -->
+<!-- 网页版激活门：托管模式未登录时显示 -->
 <div id="loginGate" hidden>
-  <div class="card">
-    <h3>BiliParser 网页版</h3>
-    <div class="sub">输入激活码激活</div>
-    <input id="lg-code" placeholder="BP-XXXX-XXXX-XXXX-XXXX" spellcheck="false" autocomplete="off">
-    <div class="acts"><button class="save" id="lg-go">激活</button></div>
-    <div class="note" id="lg-err"></div>
+  <div class="lg-card">
+    <div class="lg-logo">✦</div>
+    <div class="lg-title">BiliParser</div>
+    <div class="lg-desc">B 站视频 · AI 智能总结</div>
+    <input id="lg-code" placeholder="输入激活码" spellcheck="false" autocomplete="off">
+    <button id="lg-go">立即激活</button>
+    <div id="lg-err"></div>
+    <div class="lg-foot">激活码由卖家提供 · 一码通用</div>
   </div>
 </div>
 
@@ -756,11 +765,13 @@ function refreshButtons(forceDisable){
   let r; try{ r=await fetch('/api/status'); }catch(e){ r=null; }
   if(r && r.status===401){ $('#loginGate').hidden=false; $('#lg-code').focus(); return; }
   const ok=await loadLicense(); if(ok){ loadStatus(); }   // 激活门：managed 未激活会跳激活页
+  // 激活后自动打开设置面板，引导配置 AI 提供商 + Key
+  if(new URLSearchParams(location.search).has('config')){ $('#gear').click(); }
 })();
 async function loginGo(){
   const code=$('#lg-code').value.trim(); if(!code)return;
   $('#lg-err').textContent='激活中…';
-  try{ await api('/api/login',{code}); location.reload(); }
+  try{ await api('/api/login',{code}); location.href='/?config=1'; }
   catch(e){ $('#lg-err').textContent=String(e.message||e).split('\n')[0]; }
 }
 $('#lg-go').onclick=loginGo;
