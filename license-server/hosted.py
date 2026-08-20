@@ -61,7 +61,7 @@ def create_app(
     server_secret: str | None = None,
     license_server_url: str | None = None,
 ) -> Flask:
-    app = Flask(__name__)
+    app = Flask(__name__, static_folder=None)  # 禁用 Flask 默认 /static，用下面的 static_file 路由
     app.config.update(
         DB_PATH=db_path or os.environ.get("LICENSE_DB", "licenses.db"),
         SERVER_SECRET=server_secret or os.environ.get("SERVER_SECRET", "dev-secret-change-me"),
@@ -86,7 +86,7 @@ def create_app(
     @app.before_request
     def _gate():
         p = request.path
-        if p in ("/", "/favicon.ico", "/api/login", "/api/logout"):
+        if p in ("/", "/favicon.ico", "/api/login", "/api/logout") or p.startswith("/static/"):
             return None
         if not session.get("token"):
             return _err("未登录", 401, hint="请输入激活码登录")
@@ -507,6 +507,15 @@ def create_app(
         if not path.exists():
             return _err(f"前端文件缺失：{path}", 500)
         return path.read_bytes(), 200, {"Content-Type": "text/html; charset=utf-8"}
+
+    @app.get("/static/<path:name>")
+    def static_file(name):
+        import mimetypes
+        p = _CORE / "static" / name
+        if not p.is_file():
+            return _err("not found", 404)
+        mt = mimetypes.guess_type(str(p))[0] or "application/octet-stream"
+        return p.read_bytes(), 200, {"Content-Type": mt}
 
     @app.errorhandler(ApiError)
     def _on_api_error(e):
