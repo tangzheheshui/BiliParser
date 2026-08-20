@@ -35,9 +35,6 @@ button:disabled{opacity:.5}
   <div class="brand"><span class="dot"></span>BiliParser</div>
   <div class="sub">首次使用请输入激活码（一码一机，绑定当前设备）</div>
 
-  <label>授权服务器</label>
-  <input id="server" placeholder="https://lic.example.com" spellcheck="false">
-
   <label>激活码</label>
   <input id="code" class="code" placeholder="BP-XXXX-XXXX-XXXX-XXXX" spellcheck="false" maxlength="24">
 
@@ -50,21 +47,20 @@ button:disabled{opacity:.5}
 <script>
 const $ = s => document.querySelector(s);
 fetch('/api/license/state').then(r=>r.json()).then(s=>{
-  if(s.server){ $('#server').value = s.server; $('#server').readOnly = true; }
   $('#fp').textContent = '本机指纹：' + s.fingerprint;
   if(s.activated){ location.href='/'; }  // 已激活被误跳转进来 → 回主页
 }).catch(()=>{});
 $('#code').addEventListener('keydown', e=>{ if(e.key==='Enter') doActivate(); });
 
 async function doActivate(){
-  const server=$('#server').value.trim(), code=$('#code').value.trim();
+  const code=$('#code').value.trim();
   const msg=$('#msg'); msg.className='msg'; msg.textContent='';
-  if(!server||!code){ msg.className='msg err'; msg.textContent='请填服务器地址和激活码'; return; }
+  if(!code){ msg.className='msg err'; msg.textContent='请输入激活码'; return; }
   $('#go').disabled=true; msg.className='msg ok'; msg.textContent='激活中…';
   try{
     const r=await fetch('/api/license/activate',{method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({server,code})});
+      body:JSON.stringify({code})});
     const d=await r.json();
     if(!r.ok) throw new Error((d.error||'激活失败')+(d.hint?'\n'+d.hint:''));
     msg.className='msg ok'; msg.textContent='✓ 激活成功，正在进入…';

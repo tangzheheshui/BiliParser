@@ -85,14 +85,14 @@ def load_config(require: tuple[str, ...] = ()) -> Config:
         cfg.glm_base_url = os.environ["BILIPARSER_BASE_URL"]
     if os.environ.get("BILIPARSER_LICENSE_SERVER"):
         cfg.managed_server = os.environ["BILIPARSER_LICENSE_SERVER"]
-    if not cfg.managed_server:
-        # 发行版打包时烧进来的默认授权服务器（见 packaging/build-macos.sh），
-        # 优先级低于上面的环境变量和用户配置文件
-        bundled = Path(__file__).parent / "_dist_server.txt"
-        if bundled.exists():
-            server = bundled.read_text(encoding="utf-8").strip()
-            if server:
-                cfg.managed_server = server
+    # 发行版烧入的授权服务器是权威值（打包时写死，见 packaging/build-macos.sh）：
+    # 高于配置文件里的 [managed]——用户/测试残留的旧地址不能劫持正式版。
+    # 开发者想临时改用别的服务器，用上面的环境变量。
+    bundled = Path(__file__).parent / "_dist_server.txt"
+    if bundled.exists():
+        server = bundled.read_text(encoding="utf-8").strip()
+        if server:
+            cfg.managed_server = server
 
     # 未配置 GLM key 时，自动复用环境里的智谱 Coding Plan 凭证
     # （即 Claude Code 经 ANTHROPIC_BASE_URL/ANTHROPIC_AUTH_TOKEN 走的那套，
