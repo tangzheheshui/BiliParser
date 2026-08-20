@@ -40,6 +40,8 @@ body{background:var(--bg);color:var(--text);font:14px/1.6 -apple-system,"PingFan
 #ai-cfg{display:flex;gap:6px;align-items:center}
 #ai-cfg select{flex:0 0 118px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--text);padding:8px 10px;font-size:13px;outline:none}
 #ai-cfg input{flex:1;min-width:0}
+#settings .req{color:var(--err);font-weight:600}
+#set-apikey.req{border-color:var(--err)!important;box-shadow:0 0 0 3px rgba(255,107,107,.12)}
 .sec-title{font-size:11px;color:var(--dim);letter-spacing:.12em;margin:14px 0 8px;text-transform:uppercase}
 .btn{display:block;width:100%;text-align:left;padding:8px 12px;margin-bottom:7px;border:1px solid var(--line);
   border-radius:8px;background:var(--panel2);color:var(--text);cursor:pointer;font-size:13px;transition:.15s}
@@ -251,6 +253,7 @@ pre.raw{font-family:var(--mono);font-size:12.5px;white-space:pre-wrap;word-break
     <h3>设置</h3>
     <div class="sub">配置保存在 <span id="cfgpath"></span></div>
 
+    <label>AI 提供商 + API Key <span class="req">（必填）</span></label>
     <div id="ai-cfg">
       <select id="set-provider">
         <option value="">— 提供商 —</option>
@@ -734,6 +737,7 @@ $('#gear').onclick=async()=>{
     $('#set-server').value=d.managed_server||'';
     $('#set-provider').value=d.provider||'';
     $('#set-apikey').value=d.api_key_configured?'（已配置，留空保持不变）':'';
+    $('#set-apikey').classList.toggle('req', !d.api_key_configured);
   }catch(e){}
   // 网页版才显示 AI 提供商/key 配置；桌面版直连走 config 文件
   try{ const s=await api('/api/status'); $('#ai-cfg').style.display=s.hosted?'':'none'; }
