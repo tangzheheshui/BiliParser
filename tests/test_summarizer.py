@@ -135,3 +135,40 @@ def test_extract_mindmap():
     # 导图段后面还有别的 ## 标题时截断到那里
     md2 = "## 思维导图\n- x\n\n## 附录\n- y\n"
     assert summarizer.extract_mindmap(md2) == "- x"
+
+
+def test_own_key_beats_managed_proxy(monkeypatch):
+    """用户自有 key 优先于服务器代理：配了 key 就绝不去代理。"""
+    calls = {"managed": 0, "openai": 0}
+
+    def fake_managed(cfg, messages):
+        calls["managed"] += 1
+        return "managed"
+
+    monkeypatch.setattr(summarizer, "_chat_managed", fake_managed)
+
+    class _Resp:
+        status_code = 200
+        content = b'{"choices":[{"message":{"content":"direct"}}]'
+        text = ""
+
+        def json(self):
+            return {"choices": [{"message": {"content": "direct"}}]}
+
+    monkeypatch.setattr(summarizer.httpx, "post", lambda *a, **k: calls.__setitem__("openai", calls["openai"] + 1) or _Resp())
+
+    class _CfgBoth:
+        glm_api_key = "user-own-key"
+        glm_base_url = "https://open.bigmodel.cn/api/paas/v4/"
+        glm_model = "glm-4.7-flash"
+        managed_server = "https://lic.example.com"
+
+    assert summarizer._chat(_CfgBoth(), [{"role": "user", "content": "hi"}]) == "direct"
+    assert calls == {"managed": 0, "openai": 1}
+
+    class _CfgNoKey:  # 没 key → 走代理
+        glm_api_key = ""
+        managed_server = "https://lic.example.com"
+
+    summarizer._chat(_CfgNoKey(), [{"role": "user", "content": "hi"}])
+    assert calls["managed"] == 1

@@ -188,6 +188,7 @@ def api_status(cfg) -> dict:
         "model": cfg.glm_model,
         "base_url": cfg.glm_base_url,
         "endpoint": "anthropic" if summarizer._is_anthropic_endpoint(cfg) else "openai",
+        "provider": ("自有 Key" if cfg.glm_api_key else "服务器模型（免费）"),
     }
 
 
@@ -296,30 +297,69 @@ def api_license_activate(data: dict, cfg) -> dict:
     return api_license_state(cfg)
 
 
+# 自有 Key 直连的提供商映射（与 hosted.py 保持一致；server = 走授权服务器免费模型）
+PROVIDERS = {
+    "zhipu": {"label": "智谱 GLM", "base_url": "https://open.bigmodel.cn/api/paas/v4/",
+              "model": "glm-4.7-flash"},   # 免费档，用户 key 也是零成本
+    "deepseek": {"label": "DeepSeek", "base_url": "https://api.deepseek.com/v1",
+                 "model": "deepseek-chat"},
+}
+
+
 def api_config_get(cfg) -> dict:
+    provider = getattr(cfg, "glm_provider", "") or ("server" if not cfg.glm_api_key else "")
     return {
         "sessdata_configured": bool(cfg.sessdata),
         "sessdata_hint": "" if cfg.sessdata else "未配置（可选，填了能解锁 AI 字幕）",
         "managed_server": cfg.managed_server,
         "model": cfg.glm_model,
         "glm_configured": bool(cfg.glm_api_key),
+        "api_key_configured": bool(cfg.glm_api_key),
+        "provider": provider,
+        "provider_label": ("服务器模型（免费）" if provider in ("", "server")
+                           else PROVIDERS.get(provider, {}).get("label", provider)),
         "config_path": str(config.CONFIG_PATH),
     }
 
 
 def api_config_save(data: dict, cfg) -> dict:
-    """设置面板写回：sessdata / 授权服务器地址（None 表示不改）。"""
+    """设置面板写回：sessdata / 授权服务器 / AI 提供商与自有 Key。
+
+    provider=server 或留空 → 清除自有 Key，回到服务器免费模型；
+    provider=zhipu/deepseek → 写入对应 base_url/model，api_key 留空表示保持不变。
+    """
     updates: dict = {}
     if "sessdata" in data:
         updates["sessdata"] = str(data.get("sessdata") or "").strip()
     if "managed_server" in data:
         updates["managed.server_url"] = str(data.get("managed_server") or "").strip()
+    if "provider" in data:
+        provider = str(data.get("provider") or "").strip()
+        if provider in ("", "server"):
+            updates["glm.api_key"] = ""
+            updates["glm.provider"] = "server"
+        elif provider in PROVIDERS:
+            api_key = str(data.get("api_key") or "").strip()
+            if api_key and not api_key.startswith("（"):
+                updates["glm.api_key"] = api_key
+            updates["glm.provider"] = provider
+            updates["glm.base_url"] = PROVIDERS[provider]["base_url"]
+            updates["glm.model"] = PROVIDERS[provider]["model"]
+    elif "api_key" in data:
+        # 只提交了 key 没动 provider：按当前 provider 存
+        api_key = str(data.get("api_key") or "").strip()
+        if api_key and not api_key.startswith("（"):
+            updates["glm.api_key"] = api_key
     if not updates:
         raise ApiError("没有要保存的字段")
     config.update_config(updates)
     fresh = config.load_config(require=())
     cfg.sessdata = fresh.sessdata
     cfg.managed_server = fresh.managed_server
+    cfg.glm_api_key = fresh.glm_api_key
+    cfg.glm_model = fresh.glm_model
+    cfg.glm_base_url = fresh.glm_base_url
+    cfg.glm_provider = fresh.glm_provider
     return api_config_get(cfg)
 
 

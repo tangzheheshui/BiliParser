@@ -46,7 +46,7 @@ MAX_WEB_SESSIONS = 2  # 一个激活码同时最多 2 个网页会话，防共�
 # 买家可选 AI 提供商（都走 OpenAI 兼容 /chat/completions）
 PROVIDERS = {
     "zhipu": {"label": "智谱 GLM", "base_url": "https://open.bigmodel.cn/api/paas/v4/",
-              "model": "glm-4-flash"},
+              "model": "glm-4.7-flash"},
     "deepseek": {"label": "DeepSeek", "base_url": "https://api.deepseek.com/v1",
                  "model": "deepseek-chat"},
 }

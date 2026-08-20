@@ -235,15 +235,17 @@ def _chat_managed(cfg, messages: list[dict]) -> str:
 def _chat(cfg, messages: list[dict]) -> str:
     """调一次对话接口；真限流时重试一次。
 
-    三种模式：授权服务器代理（cfg.managed_server 有值）> Anthropic 兼容
-    （base_url 以 /anthropic 结尾）> OpenAI 兼容（paas/v4，默认）。
+    模式优先级：用户自有 key 直连（Anthropic 兼容 / OpenAI 兼容）>
+    授权服务器代理（发行版默认：服务器免费模型 + 每码配额）。即用户在
+    设置里配了自己的 key 就用自己的（运营方零成本），没配走服务器。
     注意：智谱余额不足（错误码 1113）也返回 HTTP 429，不能重试，
     要把「请充值」透出给用户。
     """
-    if getattr(cfg, "managed_server", ""):
+    if getattr(cfg, "glm_api_key", ""):
+        if _is_anthropic_endpoint(cfg):
+            return _chat_anthropic(cfg, messages)
+    elif getattr(cfg, "managed_server", ""):
         return _chat_managed(cfg, messages)
-    if _is_anthropic_endpoint(cfg):
-        return _chat_anthropic(cfg, messages)
 
     url = cfg.glm_base_url.rstrip("/") + "/chat/completions"
     headers = {"Authorization": f"Bearer {cfg.glm_api_key}"}

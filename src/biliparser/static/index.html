@@ -253,14 +253,14 @@ pre.raw{font-family:var(--mono);font-size:12.5px;white-space:pre-wrap;word-break
     <h3>设置</h3>
     <div class="sub">配置保存在 <span id="cfgpath"></span></div>
 
-    <label>AI 提供商 + API Key <span class="req">（必填）</span></label>
+    <label>AI 提供商 + API Key（可选：不填用服务器免费模型）</label>
     <div id="ai-cfg">
       <select id="set-provider">
-        <option value="">— 提供商 —</option>
-        <option value="zhipu">智谱 GLM</option>
-        <option value="deepseek">DeepSeek</option>
+        <option value="server">服务器模型（默认·免费）</option>
+        <option value="zhipu">智谱 GLM（自有 Key）</option>
+        <option value="deepseek">DeepSeek（自有 Key）</option>
       </select>
-      <input id="set-apikey" placeholder="API Key（总结必需）" spellcheck="false">
+      <input id="set-apikey" placeholder="API Key（选了自有提供商才需要）" spellcheck="false">
     </div>
 
     <label>B 站 SESSDATA（可选，填了能解锁 AI 字幕）</label>
@@ -739,9 +739,7 @@ $('#gear').onclick=async()=>{
     $('#set-apikey').value=d.api_key_configured?'（已配置，留空保持不变）':'';
     $('#set-apikey').classList.toggle('req', !d.api_key_configured);
   }catch(e){}
-  // 网页版才显示 AI 提供商/key 配置；桌面版直连走 config 文件
-  try{ const s=await api('/api/status'); $('#ai-cfg').style.display=s.hosted?'':'none'; }
-  catch(e){ $('#ai-cfg').style.display='none'; }
+  // AI 提供商配置对所有版本可见（服务器模型=默认免配置）
   $('#settings').classList.add('show');
 };
 $('#set-save').onclick=async()=>{

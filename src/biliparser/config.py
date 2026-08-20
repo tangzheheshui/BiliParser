@@ -42,6 +42,7 @@ class Config:
     glm_api_key: str = ""
     glm_model: str = "glm-4.7"
     glm_base_url: str = "https://open.bigmodel.cn/api/paas/v4/"
+    glm_provider: str = ""           # 设置面板状态用：zhipu/deepseek/server
     # 发行版模式：授权服务器地址。设置后 AI 调用走服务器代理（需已激活），
     # 留空 = 直连模式（自用，本地配 GLM key）
     managed_server: str = ""
@@ -70,6 +71,7 @@ def load_config(require: tuple[str, ...] = ()) -> Config:
             cfg.glm_model = str(glm["model"])
         if glm.get("base_url"):
             cfg.glm_base_url = str(glm["base_url"])
+        cfg.glm_provider = str(glm.get("provider", "") or "")
         managed = raw.get("managed", {})
         if isinstance(managed, dict):
             cfg.managed_server = str(managed.get("server_url", "") or "")
