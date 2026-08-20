@@ -187,3 +187,39 @@ def test_admin_requires_key(client):
     assert client.get("/admin").status_code == 403
     assert client.get("/admin?key=wrong").status_code == 403
     assert client.get("/admin?key=admin-key").status_code == 200
+
+
+# ---------- 网页版登录（一码通用，不占设备位） ----------
+
+def _web_login(client, code):
+    return client.post("/api/web/login", json={"code": code})
+
+
+def test_web_login_ok_and_quota_shared(client, monkeypatch):
+    import app as app_mod
+    _gen(client)
+    code = _first_code(client)
+    # 桌面版先激活，占住设备位
+    assert _activate(client, code, "MAC-1").status_code == 200
+    # 同一个码网页登录 → 成功（一码通用）
+    r = _web_login(client, code)
+    assert r.status_code == 200
+    d = r.get_json()
+    assert d["license_id"] and parse_token("test-secret", d["token"])[1] == "WEB"
+    # WEB token 可验证
+    assert client.post("/api/verify", json={"token": d["token"]}).get_json()["valid"]
+    # WEB token 走 AI 代理并计入同一份配额（与桌面版共享）
+    class _Resp:
+        status_code = 200
+        text = json.dumps({"choices": [{"message": {"content": "ok"}}]})
+
+    monkeypatch.setattr(app_mod.httpx, "post", lambda *a, **k: _Resp())
+    r = client.post("/api/ai/chat", json={"messages": [{"role": "user", "content": "hi"}]},
+                    headers=_auth(client, d["token"]))
+    assert r.status_code == 200
+    q = client.get("/api/quota", headers=_auth(client, d["token"])).get_json()
+    assert q["today_used"] == 1
+
+
+def test_web_login_bad_code(client):
+    assert _web_login(client, "BP-NOPE").status_code == 403

@@ -66,6 +66,22 @@ BILIPARSER_LICENSE_SERVER=http://127.0.0.1:7900 uv run biliparse-web
 # 5. 打包：bash packaging/build-macos.sh → dist/BiliParser.app
 ```
 
+## 网页版（托管多用户）
+
+`license-server/hosted.py`：把 Web 工作台搬到服务器上对外发布。**一码通用**——
+同一个激活码既能激活桌面版（占设备位），也能登录网页版（不占设备位），
+两边共享同一份每日 AI 配额。不需要注册系统，激活码即账号。
+
+- 登录：前端探测 `/api/status` 返回 401 → 弹登录浮层 → `POST /api/login {code}`
+  → 授权服务器 `/api/web/login` 发 WEB 指纹 token → Flask 签名 cookie（30 天）
+- SESSDATA：用户在设置面板自己填，按激活码加密落库（`user_secrets` 表，
+  SERVER_SECRET 派生密钥流异或），换浏览器不用重填
+- 自定义模板：`prompts` 表按激活码隔离
+- AI：会话 token 走授权服务器 `/api/ai/chat`（summarizer 的 `cfg.managed_auth`
+  注入口），费用与配额和桌面版同一个池
+- 风险边界：网页版所有用户的 B 站请求都从服务器 IP 出去（桌面版在用户本机）。
+  几十个用户可控；量大触发 B 站风控，到时需多出口 IP 分摊
+
 ## 已知边界 / 后续
 
 - Windows 打包（MachineGuid 指纹 + CI）、正式签名/公证（当前未签名，

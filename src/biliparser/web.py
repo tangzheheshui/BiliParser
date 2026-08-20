@@ -123,6 +123,16 @@ def _get_meta(entry: dict, cfg) -> str:
     return entry["meta"]
 
 
+def _get_conclusion_markdown(entry: dict, cfg) -> str | None:
+    """无字幕兜底①：B 站官方 AI 总结（需登录；未登录返回 None 走元数据降级）。"""
+    info = entry["info"]
+    up_mid = (info.get("owner") or {}).get("mid")
+    r = bilibili.get_conclusion(_client(cfg), entry["bvid"], entry["cid"], up_mid)
+    if not r:
+        return None
+    return summarizer.bili_conclusion_markdown(*r)
+
+
 # ---------------- 自定义模板（~/.biliparser/prompts.json） ----------------
 
 def load_prompts() -> list[dict]:
@@ -234,7 +244,17 @@ def api_summarize(url: str, page: int | None, mode: str, cfg, prompt_id: str | N
         return {"mode": mode, "name": p["name"], "prompt_id": p["id"], "lan": t["lan_doc"], "markdown": md}
     if mode not in ("standard", "detailed"):
         raise ApiError(f"未知总结模式：{mode}")
-    t = _get_transcript(entry, cfg)
+    try:
+        t = _get_transcript(entry, cfg)
+    except ApiError:
+        # 无字幕兜底：先试 B 站官方 AI 总结（免登录），再降级元数据+热评
+        cc = _get_conclusion_markdown(entry, cfg)
+        if cc:
+            return {"mode": mode, "lan": "B站官方AI总结", "markdown": cc,
+                    "mindmap": None, "fallback": "conclusion"}
+        context = _get_meta(entry, cfg)
+        return {"mode": mode, "markdown": summarizer.summarize_meta(context, title, cfg),
+                "mindmap": None, "fallback": "meta"}
     md = summarizer.summarize(t["text"], title, cfg, detailed=(mode == "detailed"))
     return {"mode": mode, "lan": t["lan_doc"], "markdown": md,
             "mindmap": summarizer.extract_mindmap(md)}
@@ -279,7 +299,7 @@ def api_license_activate(data: dict, cfg) -> dict:
 def api_config_get(cfg) -> dict:
     return {
         "sessdata_configured": bool(cfg.sessdata),
-        "sessdata_hint": "" if cfg.sessdata else "未配置（拉字幕需要）",
+        "sessdata_hint": "" if cfg.sessdata else "未配置（可选，填了能解锁 AI 字幕）",
         "managed_server": cfg.managed_server,
         "model": cfg.glm_model,
         "glm_configured": bool(cfg.glm_api_key),

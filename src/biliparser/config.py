@@ -11,7 +11,7 @@ CONFIG_PATH = Path.home() / ".biliparser" / "config.toml"
 CONFIG_TEMPLATE = """\
 # BiliParser 配置文件
 
-# B 站登录 Cookie（获取字幕必需）：
+# B 站登录 Cookie（可选，填了能解锁 AI 字幕；不填走 CC 字幕/官方总结/降级）：
 # 电脑浏览器登录 bilibili.com → F12 开发者工具 → 应用 → Cookie
 #   → 找到 SESSDATA，复制它的值（不含引号）
 sessdata = ""

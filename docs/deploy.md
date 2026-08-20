@@ -66,7 +66,7 @@ After=network.target
 [Service]
 WorkingDirectory=/opt/biliparser-license
 EnvironmentFile=/etc/biliparser-license.env
-ExecStart=/opt/biliparser-license/.venv/bin/gunicorn -w 2 -b 0.0.0.0:7900 app:create_app\(\)
+ExecStart=/opt/biliparser-license/.venv/bin/gunicorn -w 2 -b 0.0.0.0:7900 app:create_app()
 # 路线 B 改绑本机（HTTPS 由 Caddy 终结）：-b 127.0.0.1:7900
 Restart=always
 
@@ -131,3 +131,37 @@ server_url = "http://服务器IP:7900"        # 路线 A
 ```
 
 或启动参数 `biliparser-desktop --server https://lic.example.com`。
+
+## 9. 网页版服务（可选，同机部署）
+
+同一台机器再起一个 `biliparser-web`（:7842），对外发布网页版。代码就是
+`license-server/`（含 hosted.py），另外要把 `src/biliparser` 整包拷到
+`/opt/biliparser-license/biliparser/`（hosted.py 复用其中的字幕/总结模块）：
+
+```bash
+tar --exclude=.venv --exclude=__pycache__ --exclude='*.db' \
+    -czf deploy.tgz -C license-server . -C ../src biliparser
+scp deploy.tgz user@vps:/tmp/ && ssh user@vps 'sudo tar -xzf /tmp/deploy.tgz -C /opt/biliparser-license'
+```
+
+systemd 单元（密钥复用 `/etc/biliparser-license.env`）：
+
+```ini
+[Unit]
+Description=BiliParser hosted web
+After=network.target biliparser-license.service
+
+[Service]
+WorkingDirectory=/opt/biliparser-license
+EnvironmentFile=/etc/biliparser-license.env
+ExecStart=/opt/biliparser-license/.venv/bin/gunicorn -w 2 -b 0.0.0.0:7842 "hosted:create_app()"
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+
+改过代码后两个服务都要重启（`biliparser-license` 和 `biliparser-web`）。
+安全组再放行 `TCP 7842`，用户访问 `http://服务器IP:7842` 输激活码登录。
+注意：网页版所有用户的 B 站请求都从本机 IP 出去，规模大时有风控风险
+（见 docs/licensing.md「网页版」一节）。

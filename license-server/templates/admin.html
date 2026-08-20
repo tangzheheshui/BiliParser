@@ -19,6 +19,8 @@ button{cursor:pointer}
 </head>
 <body>
 <h1>BiliParser 授权管理后台</h1>
+<p class="muted">共 {{ rows|length }} 个激活码 · 已激活 {{ rows | selectattr('device_fingerprint') | list | length }}
+· 今日 AI 调用 {{ rows | sum(attribute='used_today') }} 次</p>
 
 <div class="gen">
   <form method="post" action="/admin/generate">
@@ -40,7 +42,7 @@ button{cursor:pointer}
 <table>
   <tr>
     <th>ID</th><th>激活码</th><th>备注</th><th>状态</th><th>绑定设备</th>
-    <th>今日用量/配额</th><th>有效期</th><th>解绑次数</th><th>操作</th>
+    <th>激活时间</th><th>最近活跃</th><th>今日用量/配额</th><th>有效期</th><th>解绑次数</th><th>操作</th>
   </tr>
   {% for r in rows %}
   <tr>
@@ -55,7 +57,9 @@ button{cursor:pointer}
     <td class="muted" title="{{ r.device_fingerprint or '' }}">
       {{ (r.device_fingerprint or '')[:16] }}
     </td>
-    <td>{{ r.used_today }}/{{ r.daily_quota }}</td>
+    <td class="muted">{{ (r.activated_cn or '')[:16] or '—' }}</td>
+    <td class="muted">{{ r.last_active or '—' }}</td>
+    <td>{{ r.used_today }}/{{ r.daily_quota }}<br><span class="muted">累计 {{ r.total_used }}</span></td>
     <td>{{ r.expires_at or '永久' }}</td>
     <td>{{ r.unbind_count }}</td>
     <td>

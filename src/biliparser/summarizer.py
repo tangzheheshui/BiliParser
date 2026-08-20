@@ -4,6 +4,8 @@ import time
 
 import httpx
 
+from . import subtitle
+
 # 超过此字符数（约 2h+ 视频）走分块摘要再合并
 MAX_CHARS = 50_000
 CHUNK_CHARS = 40_000
@@ -88,6 +90,24 @@ META_SYSTEM_PROMPT = """你是视频内容总结助手。这次没有视频字�
 
 
 MINDMAP_HEADING = "## 思维导图"
+
+
+def bili_conclusion_markdown(summary: str, outline: list) -> str:
+    """把 B 站官方 AI 总结拼成 Markdown（无字幕时的兜底，格式对齐标准总结）。
+
+    outline 为 [{title, timestamp, part_outline:[{timestamp, content}]}]。
+    """
+    parts = ["## 一句话总结\n" + summary]
+    if outline:
+        lines = ["## 章节时间线"]
+        for seg in outline:
+            t = subtitle.format_ts(seg.get("timestamp") or 0)
+            lines.append(f"- `{t}` {seg.get('title') or ''}")
+            for pt in seg.get("part_outline") or []:
+                pt_t = subtitle.format_ts(pt.get("timestamp") or 0)
+                lines.append(f"  - `{pt_t}` {pt.get('content') or ''}")
+        parts.append("\n".join(lines))
+    return "\n\n".join(parts)
 
 
 def extract_mindmap(md: str) -> str | None:
@@ -184,7 +204,8 @@ def _chat_managed(cfg, messages: list[dict]) -> str:
 
     base = cfg.managed_server.rstrip("/")
     try:
-        headers = licensing.auth_header()
+        # 网页托管版把会话 token 直接挂在 cfg 上（无本地凭证文件）
+        headers = getattr(cfg, "managed_auth", None) or licensing.auth_header()
         resp = httpx.post(
             base + "/api/ai/chat",
             json={"messages": messages, "temperature": 0.3},

@@ -99,6 +99,28 @@ def test_detailed_flag_switches_prompt(monkeypatch):
     assert captured["system"] == summarizer.DETAILED_SYSTEM_PROMPT
 
 
+def test_managed_auth_override(monkeypatch):
+    """cfg.managed_auth 注入（网页托管版用）：不读本地凭证文件，直接带头。"""
+    captured = {}
+
+    def fake_post(url, **kw):
+        captured.update(url=url, headers=kw["headers"], json=kw["json"])
+        return _Resp(200, {"choices": [{"message": {"content": "ok"}}]})
+
+    monkeypatch.setattr(summarizer.httpx, "post", fake_post)
+
+    class _M:
+        managed_server = "http://lic"
+        managed_auth = {"Authorization": "Bearer WEBTOK"}
+        glm_api_key = ""
+        glm_base_url = ""
+        glm_model = "m"
+
+    assert summarizer._chat(_M(), [{"role": "user", "content": "hi"}]) == "ok"
+    assert captured["url"] == "http://lic/api/ai/chat"
+    assert captured["headers"]["Authorization"] == "Bearer WEBTOK"
+
+
 def test_extract_mindmap():
     md = (
         "## 一句话总结\n这是总结。\n\n"

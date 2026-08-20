@@ -91,6 +91,10 @@ GLM key、按码每日限流），B 站请求仍走用户本机。授权服务�
 `license-server/`（Flask + SQLite + 管理后台），需求见
 [docs/licensing.md](docs/licensing.md)，部署见 [docs/deploy.md](docs/deploy.md)。
 
+网页版托管：`license-server/hosted.py` 把 Web 工作台搬到服务器对外发布，
+激活码即账号（与桌面版一码通用、共享每日配额），用户在网页设置里填自己的
+B 站 SESSDATA（按码加密落库）。部署见 [docs/deploy.md](docs/deploy.md) 第 9 节。
+
 ## 开发
 
 ```bash

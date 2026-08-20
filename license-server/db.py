@@ -23,6 +23,20 @@ CREATE TABLE IF NOT EXISTS usage (
     count INTEGER DEFAULT 0,
     PRIMARY KEY (license_id, day)
 );
+
+CREATE TABLE IF NOT EXISTS user_secrets (
+    license_id INTEGER PRIMARY KEY REFERENCES licenses(id),
+    sessdata_enc TEXT,             -- 用户的 B 站 SESSDATA（SERVER_SECRET 派生密钥加密）
+    updated_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS prompts (
+    license_id INTEGER NOT NULL REFERENCES licenses(id),
+    id TEXT NOT NULL,              -- p<hex 时间戳>，同 web 工作台
+    name TEXT NOT NULL,
+    prompt TEXT NOT NULL,
+    PRIMARY KEY (license_id, id)
+);
 """
 
 

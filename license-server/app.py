@@ -120,7 +120,8 @@ def create_app(
         ok, reason = _license_state(row)
         if not ok:
             return None, reason
-        if row["device_fingerprint"] != fingerprint:
+        if fingerprint != "WEB" and row["device_fingerprint"] != fingerprint:
+            # WEB = 网页版会话 token：一码通用（桌面+网页），不占设备位
             return None, "设备已解绑，请重新激活"
         return row, ""
 
@@ -167,6 +168,26 @@ def create_app(
             "token": token,
             "valid_until": (_utcnow() + timedelta(hours=GRACE_HOURS)).isoformat(),
             "usage": {"today_used": 0, "daily_quota": row["daily_quota"]},
+        })
+
+    @app.post("/api/web/login")
+    def web_login():
+        """网页版登录：验码发 WEB 指纹 token。不绑定/不校验设备指纹——
+        一码通用（桌面版激活照常占设备位），配额按码共享。"""
+        data = request.get_json(silent=True) or {}
+        code = str(data.get("code") or "").strip()
+        if not code:
+            return err("请输入激活码", 400)
+        row = db().execute("SELECT * FROM licenses WHERE code=?", (code,)).fetchone()
+        ok, reason = _license_state(row)
+        if not ok:
+            return err(reason, 403, hint="请确认激活码输入无误，或联系卖家")
+        exp_ts = int((_utcnow() + timedelta(days=TOKEN_TTL_DAYS)).timestamp())
+        token = issue_token(app.config["SERVER_SECRET"], row["id"], "WEB", exp_ts)
+        return jsonify({
+            "success": True, "license_id": row["id"], "token": token,
+            "valid_until": (_utcnow() + timedelta(hours=GRACE_HOURS)).isoformat(),
+            "usage": _usage(row),
         })
 
     @app.post("/api/verify")
@@ -244,12 +265,7 @@ def create_app(
     def admin_page():
         if not _admin_ok():
             return err("管理密钥错误", 403)
-        rows = db().execute(
-            "SELECT l.*, COALESCE(u.count,0) AS used_today FROM licenses l "
-            "LEFT JOIN usage u ON u.license_id=l.id AND u.day=date('now','localtime') "
-            "ORDER BY l.id DESC"
-        ).fetchall()
-        return render_template("admin.html", rows=rows, key=app.config["ADMIN_KEY"])
+        return render_template("admin.html", rows=_all_rows(db()), key=app.config["ADMIN_KEY"])
 
     @app.post("/admin/generate")
     def admin_generate():
@@ -301,8 +317,13 @@ def create_app(
         return redirect(f"/admin?key={app.config['ADMIN_KEY']}")
 
     def _all_rows(dbconn):
+        """列表页数据：今日用量 + 用户画像（累计用量/最近活跃/激活时间，转北京时间）。"""
         return dbconn.execute(
-            "SELECT l.*, COALESCE(u.count,0) AS used_today FROM licenses l "
+            "SELECT l.*, COALESCE(u.count,0) AS used_today, "
+            "COALESCE((SELECT SUM(x.count) FROM usage x WHERE x.license_id=l.id),0) AS total_used, "
+            "(SELECT MAX(x.day) FROM usage x WHERE x.license_id=l.id) AS last_active, "
+            "datetime(l.activated_at,'+8 hours') AS activated_cn "
+            "FROM licenses l "
             "LEFT JOIN usage u ON u.license_id=l.id AND u.day=date('now','localtime') "
             "ORDER BY l.id DESC"
         ).fetchall()

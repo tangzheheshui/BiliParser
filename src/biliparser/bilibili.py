@@ -353,3 +353,33 @@ def fetch_full_subtitle(
         seen[subtitle_fingerprint(best_lines)] = cid
         _save_seen(seen)
     return best_sub, best_lines, (best_cov if duration else 1.0), len(fingerprints) <= 1
+
+
+def get_conclusion(client: httpx.Client, bvid: str, cid: int, up_mid: int) -> tuple[str, list] | None:
+    """B 站官方 AI 视频总结（view/conclusion/get），无字幕时的兜底源。
+
+    实测（2026-08）：未登录返回 -101，需带 SESSDATA。返回 (summary, outline)
+    或 None；排队中(data.code==1)、不支持(data.code==-1)、未登录/请求失败
+    都返回 None，由调用方继续降级。Wbi 签名复用现有链路。
+    """
+    if not up_mid:
+        return None
+    try:
+        img_key, sub_key = _get_wbi_keys(client)
+        params = wbi.sign_params({"bvid": bvid, "cid": cid, "up_mid": up_mid}, img_key, sub_key)
+        data = _request_json(
+            client, "/x/web-interface/view/conclusion/get", params, "获取官方 AI 总结"
+        )
+    except (BiliError, KeyError, ValueError):
+        return None
+    if data.get("code") != 0:
+        return None
+    d = data.get("data") or {}
+    if d.get("code") != 0:
+        return None
+    mr = d.get("model_result") or {}
+    summary = str(mr.get("summary") or "").strip()
+    outline = mr.get("outline") or []
+    if not summary and not outline:
+        return None
+    return summary, outline
