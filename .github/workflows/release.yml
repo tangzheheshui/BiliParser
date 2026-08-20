@@ -58,10 +58,23 @@ jobs:
 
       - name: Windows 封安装器（Inno Setup）
         if: runner.os == 'Windows'
-        shell: cmd
+        shell: pwsh
         run: |
-          choco install innosetup -y --no-progress
-          "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" packaging\biliparser.iss
+          # 不依赖 Chocolatey（新版 runner 已移除）：官方安装器 /PORTABLE 直装
+          $ok = $false
+          foreach ($u in @(
+            "https://files.jrsoftware.org/is/6/innosetup-6.4.3.exe",
+            "https://github.com/jrsoftware/issrc/releases/download/6.4.3/innosetup-6.4.3.exe"
+          )) {
+            try {
+              Invoke-WebRequest -Uri $u -OutFile isetup.exe -UseBasicParsing
+              $ok = $true; break
+            } catch { Write-Host "下载失败：$u" }
+          }
+          if (-not $ok) { throw "Inno Setup 下载失败" }
+          Start-Process -Wait -FilePath ".\isetup.exe" `
+            -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/PORTABLE=1","/DIR=C:\InnoSetup"
+          & "C:\InnoSetup\ISCC.exe" "packaging\biliparser.iss"
 
       - uses: actions/upload-artifact@v4
         with:

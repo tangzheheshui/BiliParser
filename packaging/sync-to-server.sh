@@ -25,8 +25,11 @@ if [ "$SRC" = "local" ]; then
     || echo "[提示] 本机 dist/ 没有 Windows 安装包（需 CI 构建），仅同步 mac"
 else
   BASE="https://github.com/tangzheheshui/BiliParser/releases/$TAG/download"
-  curl -fL -o BiliParser-macOS.dmg          "$BASE/BiliParser-macOS.dmg"
-  curl -fL -o BiliParser-Setup-Windows.exe  "$BASE/BiliParser-Setup-Windows.exe"
+  # 缺哪个资产不整体中断（CI 单平台失败时仍可同步另一个平台）
+  curl -fsL -o BiliParser-macOS.dmg          "$BASE/BiliParser-macOS.dmg" \
+    || echo "[警告] mac 包下载失败（CI 是否成功？）"
+  curl -fsL -o BiliParser-Setup-Windows.exe  "$BASE/BiliParser-Setup-Windows.exe" \
+    || echo "[警告] Windows 包下载失败（CI 是否成功？）"
 fi
 
 VERSION="${TAG#v}"
