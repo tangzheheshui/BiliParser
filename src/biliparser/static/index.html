@@ -253,7 +253,13 @@ pre.raw{font-family:var(--mono);font-size:12.5px;white-space:pre-wrap;word-break
 
     <label>B 站 SESSDATA（可选，填了能解锁 AI 字幕）</label>
     <input id="set-sessdata" placeholder="粘贴 SESSDATA" spellcheck="false">
-    <div class="note">获取：浏览器登录 bilibili.com → F12 → 「应用」标签 → 左侧 Cookie → bilibili.com → 复制 SESSDATA 那一行的「值」。</div>
+    <div class="note"><b>获取 SESSDATA：</b><br>
+      1. 电脑浏览器登录 bilibili.com，打开任意一个视频<br>
+      2. 按 <b>F12</b>（或右键 → 检查）打开开发者工具<br>
+      3. 点顶部「<b>应用</b>」标签（英文 Application）<br>
+      4. 左侧「存储」下展开「<b>Cookie</b>」，点 <b>bilibili.com</b><br>
+      5. 右侧列表找到「<b>SESSDATA</b>」这一行，双击它的「<b>值</b>」单元格全选<br>
+      6. 按 <b>Ctrl+C</b> 复制，回到这里 <b>Ctrl+V</b> 粘贴</div>
 
     <div id="server-cfg" style="display:none">
       <label>授权服务器（留空 = 直连模式）</label>
