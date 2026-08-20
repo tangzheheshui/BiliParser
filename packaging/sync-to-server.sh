@@ -24,11 +24,14 @@ if [ "$SRC" = "local" ]; then
   [ -f ../../dist/BiliParser-Setup-Windows.exe ] && cp ../../dist/BiliParser-Setup-Windows.exe . \
     || echo "[提示] 本机 dist/ 没有 Windows 安装包（需 CI 构建），仅同步 mac"
 else
-  BASE="https://github.com/tangzheheshui/BiliParser/releases/$TAG/download"
+  # 规范式 /releases/download/<tag>/ 比标签式 /releases/<tag>/download/ 稳
+  # （后者刚发布时常 404，CDN 传播延迟）。latest 时才用 latest/download。
+  BASE="https://github.com/tangzheheshui/BiliParser/releases/download/$TAG"
+  [ "$TAG" = "latest" ] && BASE="https://github.com/tangzheheshui/BiliParser/releases/latest/download"
   # 缺哪个资产不整体中断（CI 单平台失败时仍可同步另一个平台）
-  curl -fsL -o BiliParser-macOS.dmg          "$BASE/BiliParser-macOS.dmg" \
+  curl -fsL --retry 3 --retry-delay 5 -o BiliParser-macOS.dmg          "$BASE/BiliParser-macOS.dmg" \
     || echo "[警告] mac 包下载失败（CI 是否成功？）"
-  curl -fsL -o BiliParser-Setup-Windows.exe  "$BASE/BiliParser-Setup-Windows.exe" \
+  curl -fsL --retry 3 --retry-delay 5 -o BiliParser-Setup-Windows.exe  "$BASE/BiliParser-Setup-Windows.exe" \
     || echo "[警告] Windows 包下载失败（CI 是否成功？）"
 fi
 
