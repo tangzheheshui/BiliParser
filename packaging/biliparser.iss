@@ -2,8 +2,10 @@
 ; 由 GitHub Actions（packaging 调 iscc）或本地 Windows 机器编译：
 ;   iscc packaging/biliparser.iss    （需先跑 pyinstaller 出 dist\BiliParser\）
 ; 产物：dist/BiliParser-Setup-Windows.exe
-; 注：刻意用最保守语法（无语言包覆盖、无架构指令）——Inno 7 的目录
-; 布局变动曾导致编译失败（2026-08 实测踩坑），先保证能出包。
+; 注意：ISCC 以本文件所在目录解析相对路径（实测踩坑：写成 dist\... 会
+; 去找 packaging\dist\），故统一用 {#SourcePath} 锚定仓库根。
+
+#define RepoRoot "{#SourcePath}\.."
 
 [Setup]
 AppName=BiliParser
@@ -12,7 +14,7 @@ AppPublisher=BiliParser
 DefaultDirName={autopf}\BiliParser
 DefaultGroupName=BiliParser
 UninstallDisplayName=BiliParser
-OutputDir=dist
+OutputDir={#RepoRoot}\dist
 OutputBaseFilename=BiliParser-Setup-Windows
 Compression=lzma2
 SolidCompression=yes
@@ -20,7 +22,7 @@ PrivilegesRequired=lowest
 DisableProgramGroupPage=yes
 
 [Files]
-Source: "dist\BiliParser\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs
+Source: "{#RepoRoot}\dist\BiliParser\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\BiliParser"; Filename: "{app}\BiliParser.exe"
