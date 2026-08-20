@@ -214,6 +214,11 @@ def api_subtitle(url: str, page: int | None, cfg) -> dict:
 
 
 def api_summarize(url: str, page: int | None, mode: str, cfg, prompt_id: str | None = None) -> dict:
+    # 自定义模板存在性检查不依赖网络/配置，先做，保证 404 干净报错
+    if mode == "custom":
+        p = next((x for x in load_prompts() if x.get("id") == prompt_id), None)
+        if not p:
+            raise ApiError(f"模板不存在：{prompt_id}", status=404)
     entry = _get_video(url, page, cfg)
     title = entry["info"].get("title", "")
     if not cfg.glm_api_key and mode != "subtitle":
@@ -224,9 +229,6 @@ def api_summarize(url: str, page: int | None, mode: str, cfg, prompt_id: str | N
         context = _get_meta(entry, cfg)
         return {"mode": mode, "markdown": summarizer.summarize_meta(context, title, cfg)}
     if mode == "custom":
-        p = next((x for x in load_prompts() if x.get("id") == prompt_id), None)
-        if not p:
-            raise ApiError(f"模板不存在：{prompt_id}", status=404)
         t = _get_transcript(entry, cfg)
         md = summarizer.summarize_custom(t["text"], title, cfg, p["prompt"])
         return {"mode": mode, "name": p["name"], "prompt_id": p["id"], "lan": t["lan_doc"], "markdown": md}
@@ -234,7 +236,8 @@ def api_summarize(url: str, page: int | None, mode: str, cfg, prompt_id: str | N
         raise ApiError(f"未知总结模式：{mode}")
     t = _get_transcript(entry, cfg)
     md = summarizer.summarize(t["text"], title, cfg, detailed=(mode == "detailed"))
-    return {"mode": mode, "lan": t["lan_doc"], "markdown": md}
+    return {"mode": mode, "lan": t["lan_doc"], "markdown": md,
+            "mindmap": summarizer.extract_mindmap(md)}
 
 
 def api_meta(url: str, page: int | None, cfg) -> dict:

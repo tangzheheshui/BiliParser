@@ -8,6 +8,7 @@
 import hashlib
 import json
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -26,8 +27,19 @@ class LicensingError(Exception):
 # ---------------- 设备指纹 ----------------
 
 def fingerprint() -> str:
-    """稳定设备指纹：macOS 用 IOPlatformUUID（重装系统才变），其他平台
-    回退到 hostname+家目录哈希（Windows 打包时换注册表 MachineGuid）。"""
+    """稳定设备指纹：Windows 用注册表 MachineGuid、macOS 用 IOPlatformUUID
+    （两者都是重装系统/换机器才变），其他平台回退到 home 目录哈希。"""
+    if sys.platform == "win32":
+        try:
+            import winreg
+            with winreg.OpenKey(
+                winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography"
+            ) as key:
+                guid, _ = winreg.QueryValueEx(key, "MachineGuid")
+            if guid:
+                return "WIN-" + hashlib.sha256(str(guid).encode()).hexdigest()[:24]
+        except OSError:
+            pass
     try:
         out = subprocess.run(
             ["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"],

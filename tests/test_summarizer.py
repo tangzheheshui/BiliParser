@@ -97,3 +97,19 @@ def test_detailed_flag_switches_prompt(monkeypatch):
     assert captured["system"] == summarizer.SYSTEM_PROMPT
     summarizer.summarize("[00:01] 内容", "标题", _Cfg(), detailed=True)
     assert captured["system"] == summarizer.DETAILED_SYSTEM_PROMPT
+
+
+def test_extract_mindmap():
+    md = (
+        "## 一句话总结\n这是总结。\n\n"
+        "## 核心要点\n- a\n\n"
+        "## 思维导图\n- 分支1\n  - 子1\n- 分支2\n"
+    )
+    assert summarizer.extract_mindmap(md) == "- 分支1\n  - 子1\n- 分支2"
+    # 无导图段 / 空串 → None
+    assert summarizer.extract_mindmap("没有导图") is None
+    assert summarizer.extract_mindmap("") is None
+    assert summarizer.extract_mindmap(None) is None
+    # 导图段后面还有别的 ## 标题时截断到那里
+    md2 = "## 思维导图\n- x\n\n## 附录\n- y\n"
+    assert summarizer.extract_mindmap(md2) == "- x"

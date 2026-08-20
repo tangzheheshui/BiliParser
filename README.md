@@ -50,6 +50,9 @@ uv run biliparse BV1xx411c7mD --subtitle-only
 # 详尽版总结（不漏话题、保留具体数字与金句，存为 <BV号>-详细.md）
 uv run biliparse BV1xx411c7mD --detailed --save
 
+# 只输出思维导图（随总结自动生成的缩进树）
+uv run biliparse BV1xx411c7mD --mindmap
+
 # 保存为 Markdown 文件
 uv run biliparse BV1xx411c7mD --save          # 存为 <BV号>.md
 uv run biliparse BV1xx411c7mD --save 总结.md
@@ -69,7 +72,8 @@ uv run biliparse-web            # http://127.0.0.1:7842
 ```
 
 三栏工作区：左侧操作按钮与配置状态，中间视频链接与预览，右侧文本分析
-（原始字幕 / 标准总结 / 详尽总结 / 元数据+热评 四个页签，支持复制与导出 .md）。
+（原始字幕 / 标准总结 / 详尽总结 / 思维导图 / 元数据+热评 五个页签，支持复制与导出 .md；
+思维导图随总结自动生成，节点可折叠，可导出 SVG 图片 / Mermaid / Markdown 大纲）。
 零新依赖（标准库起服务 + 单文件前端），需求与设计见 [docs/web-workspace.md](docs/web-workspace.md)。
 
 ## 桌面版与发行模式（激活码）
@@ -78,7 +82,8 @@ uv run biliparse-web            # http://127.0.0.1:7842
 uv sync --group desktop                          # pywebview + pyinstaller
 uv run biliparser-desktop                        # 直连模式（自用）
 uv run biliparser-desktop --server https://…     # 发行模式：首启激活码
-bash packaging/build-macos.sh                    # 打包 dist/BiliParser.app
+bash packaging/build-macos.sh                    # macOS 打包 dist/BiliParser.app
+bash packaging/build-windows.sh                  # Windows 打包 dist/BiliParser/（装了 Inno Setup 会顺带出 setup.exe）
 ```
 
 发行模式：一码一机 + 72h 离线宽限；AI 调用经授权服务器代理（服务器持有

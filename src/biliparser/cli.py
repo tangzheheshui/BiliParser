@@ -34,6 +34,7 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--lang", default=None, help="指定字幕语言（如 zh-CN、ai_zh），默认自动选择")
     p.add_argument("--subtitle-only", action="store_true", help="只输出字幕全文，不调用 LLM")
     p.add_argument("--detailed", action="store_true", help="详尽版总结（不漏话题、保留具体数字与金句）")
+    p.add_argument("--mindmap", action="store_true", help="只输出思维导图（从总结中抽取的缩进树）")
     p.add_argument("--asr", action="store_true", help="跳过 B 站字幕，直接下载音频本地转写（内容必然正确，较慢）")
     p.add_argument(
         "--save", nargs="?", const="AUTO", metavar="FILE",
@@ -150,9 +151,16 @@ def run(args: argparse.Namespace) -> int:
             mode = "详尽" if args.detailed else "标准"
             print(f"→ AI（{cfg.glm_model}）{mode}总结中 …", flush=True)
             summary = summarizer.summarize(transcript, title, cfg, detailed=args.detailed)
-            output = _output_doc(
-                title, page_tag, owner, bvid, _fmt_duration(duration), source, summary,
-            )
+            if args.mindmap:
+                mm = summarizer.extract_mindmap(summary)
+                if not mm:
+                    print("⚠ 本次总结未生成思维导图段（模型输出异常），回退为完整总结", file=sys.stderr)
+                    mm = summary
+                output = f"# {title} {page_tag}\n\n{mm}\n"
+            else:
+                output = _output_doc(
+                    title, page_tag, owner, bvid, _fmt_duration(duration), source, summary,
+                )
             print(output)
 
     if args.save:

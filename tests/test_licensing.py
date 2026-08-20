@@ -14,13 +14,12 @@ def _isolate(monkeypatch, tmp_path):
     monkeypatch.setattr(licensing, "LICENSE_PATH", tmp_path / "license.json")
 
 
-def test_fingerprint_stable_and_prefixed(monkeypatch):
-    # 模拟 ioreg 输出为空 → 走 FB 回退分支
-    monkeypatch.setattr(licensing.subprocess, "run",
-                        lambda *a, **k: type("R", (), {"stdout": ""})())
+def test_fingerprint_stable_and_prefixed():
+    # 不同平台前缀不同（WIN=注册表 MachineGuid / MAC=ioreg / FB=回退），但都应稳定
     fp1 = licensing.fingerprint()
     fp2 = licensing.fingerprint()
-    assert fp1 == fp2 and fp1.startswith("FB-")
+    assert fp1 == fp2
+    assert fp1.startswith(("WIN-", "MAC-", "FB-"))
 
 
 def test_obfuscate_roundtrip_and_wrong_fp():
