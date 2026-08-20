@@ -75,7 +75,7 @@ jobs:
           Write-Host "安装器大小：$((Get-Item isetup.exe).Length) 字节"
           Start-Process -Wait -FilePath ".\isetup.exe" `
             -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/PORTABLE=1","/DIR=C:\InnoSetup"
-          & "C:\InnoSetup\ISCC.exe" "packaging\biliparser.iss"
+          & "C:\InnoSetup\ISCC.exe" "/DRepoRoot=$env:GITHUB_WORKSPACE" "packaging\biliparser.iss"
           if ($LASTEXITCODE -ne 0) { throw "ISCC 编译失败：$LASTEXITCODE" }
 
       - uses: actions/upload-artifact@v4

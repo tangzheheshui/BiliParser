@@ -3,9 +3,12 @@
 ;   iscc packaging/biliparser.iss    （需先跑 pyinstaller 出 dist\BiliParser\）
 ; 产物：dist/BiliParser-Setup-Windows.exe
 ; 注意：ISCC 以本文件所在目录解析相对路径（实测踩坑：写成 dist\... 会
-; 去找 packaging\dist\），故统一用 {#SourcePath} 锚定仓库根。
+; 去找 packaging\dist\），且 #define 里嵌套 {#SourcePath} 不可靠——
+; 正确姿势由调用方传绝对路径：iscc /DRepoRoot=<仓库绝对路径> 本文件
 
-#define RepoRoot "{#SourcePath}\.."
+#ifndef RepoRoot
+  #define RepoRoot ".."
+#endif
 
 [Setup]
 AppName=BiliParser
