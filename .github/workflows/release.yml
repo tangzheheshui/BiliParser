@@ -60,21 +60,23 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          # 不依赖 Chocolatey（新版 runner 已移除）：官方安装器 /PORTABLE 直装
-          $ok = $false
-          foreach ($u in @(
-            "https://files.jrsoftware.org/is/6/innosetup-6.4.3.exe",
-            "https://github.com/jrsoftware/issrc/releases/download/6.4.3/innosetup-6.4.3.exe"
-          )) {
-            try {
-              Invoke-WebRequest -Uri $u -OutFile isetup.exe -UseBasicParsing
-              $ok = $true; break
-            } catch { Write-Host "下载失败：$u" }
-          }
-          if (-not $ok) { throw "Inno Setup 下载失败" }
+          # 不依赖 Chocolatey（新版 runner 已移除）。官方安装包只在 GitHub Releases：
+          # 动态取最新版 x64 安装器，失败则退回固定版本。
+          $url = $null
+          try {
+            $rel = Invoke-RestMethod "https://api.github.com/repos/jrsoftware/issrc/releases/latest" `
+              -Headers @{ "User-Agent" = "ci" }
+            $url = ($rel.assets | Where-Object { $_.name -like "innosetup-*-x64.exe" } |
+                    Select-Object -First 1).browser_download_url
+            Write-Host "Inno 最新版：$($rel.tag_name) → $url"
+          } catch { Write-Host "查询最新版失败：$_" }
+          if (-not $url) { $url = "https://github.com/jrsoftware/issrc/releases/download/is-7_1_0/innosetup-7.1.0-x64.exe" }
+          Invoke-WebRequest -Uri $url -OutFile isetup.exe -UseBasicParsing
+          Write-Host "安装器大小：$((Get-Item isetup.exe).Length) 字节"
           Start-Process -Wait -FilePath ".\isetup.exe" `
             -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/PORTABLE=1","/DIR=C:\InnoSetup"
           & "C:\InnoSetup\ISCC.exe" "packaging\biliparser.iss"
+          if ($LASTEXITCODE -ne 0) { throw "ISCC 编译失败：$LASTEXITCODE" }
 
       - uses: actions/upload-artifact@v4
         with:
