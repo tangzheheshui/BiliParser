@@ -12,7 +12,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 SERVER="${SERVER:?需要 SERVER=user@vps}"
-REMOTE_DIR="${REMOTE_DIR:-/opt/biliparser-license/downloads}"
+REMOTE_DIR="${REMOTE_DIR:-/opt/BiliParser/license-server/downloads}"
 TAG="${TAG:-latest}"
 SRC="${1:-release}"
 
