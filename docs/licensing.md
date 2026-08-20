@@ -69,16 +69,18 @@ BILIPARSER_LICENSE_SERVER=http://127.0.0.1:7900 uv run biliparse-web
 ## 网页版（托管多用户）
 
 `license-server/hosted.py`：把 Web 工作台搬到服务器上对外发布。**一码通用**——
-同一个激活码既能激活桌面版（占设备位），也能登录网页版（不占设备位），
-两边共享同一份每日 AI 配额。不需要注册系统，激活码即账号。
+同一个激活码既能激活桌面版（占设备位），也能登录网页版（不占设备位）。
+不需要注册系统，激活码即账号。
 
 - 登录：前端探测 `/api/status` 返回 401 → 弹登录浮层 → `POST /api/login {code}`
   → 授权服务器 `/api/web/login` 发 WEB 指纹 token → Flask 签名 cookie（30 天）
+- 会话限制：一码最多 2 个同时在线网页会话，第 3 个登录挤掉最老（防共享）
 - SESSDATA：用户在设置面板自己填，按激活码加密落库（`user_secrets` 表，
   SERVER_SECRET 派生密钥流异或），换浏览器不用重填
 - 自定义模板：`prompts` 表按激活码隔离
-- AI：会话 token 走授权服务器 `/api/ai/chat`（summarizer 的 `cfg.managed_auth`
-  注入口），费用与配额和桌面版同一个池
+- AI：买家在设置面板自配 API key（智谱 GLM / DeepSeek 二选一，均 OpenAI
+  兼容），加密落库；总结时服务器代调买家选的提供商（`_Cfg` 走 OpenAI 路径，
+  不设 managed_server）。**费用买家自付，卖家不垫钱、不限配额**
 - 风险边界：网页版所有用户的 B 站请求都从服务器 IP 出去（桌面版在用户本机）。
   几十个用户可控；量大触发 B 站风控，到时需多出口 IP 分摊
 

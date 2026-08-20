@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS usage (
 CREATE TABLE IF NOT EXISTS user_secrets (
     license_id INTEGER PRIMARY KEY REFERENCES licenses(id),
     sessdata_enc TEXT,             -- 用户的 B 站 SESSDATA（SERVER_SECRET 派生密钥加密）
+    provider TEXT,                 -- 买家的 AI 提供商：zhipu / deepseek
+    api_key_enc TEXT,              -- 买家的 API key（加密）
     updated_at TEXT
 );
 
@@ -53,4 +55,10 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     conn = sqlite3.connect(str(db_path), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    # 迁移：老库的 user_secrets 无 provider/api_key_enc 列
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(user_secrets)")]
+    if "provider" not in cols:
+        conn.execute("ALTER TABLE user_secrets ADD COLUMN provider TEXT")
+    if "api_key_enc" not in cols:
+        conn.execute("ALTER TABLE user_secrets ADD COLUMN api_key_enc TEXT")
     return conn

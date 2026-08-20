@@ -16,7 +16,7 @@
 
 - VPS（Ubuntu 22.04/24.04）
 - （仅路线 B）域名一条 A 记录指到 VPS（如 `lic.example.com`）；境内须已备案
-- 智谱 API Key（服务器的 GLM 账户，用户 AI 调用从这里扣）
+- 智谱 API Key（仅桌面版发行模式需要；网页版用买家自己的 key，此 key 可留空）
 
 ## 1. 上传代码
 
@@ -49,8 +49,8 @@ python3 -c "import secrets; print(secrets.token_hex(32))"   # ×2，分别做 SE
 ```bash
 SERVER_SECRET=<长随机串>        # token 签名密钥，泄露=可伪造凭证，换它需全员重新激活
 ADMIN_KEY=<长随机串>            # 管理后台密钥
-GLM_API_KEY=<智谱key>
-GLM_MODEL=glm-4-flash          # 服务端统一模型，成本可控；可换 glm-4.7 等
+GLM_API_KEY=<智谱key>           # 仅桌面版发行模式用；网页版走买家自己的 key，留空即可
+GLM_MODEL=glm-4-flash           # 同上，仅桌面版发行模式
 LICENSE_DB=/opt/biliparser-license/licenses.db
 ```
 

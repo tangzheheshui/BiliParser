@@ -243,6 +243,15 @@ pre.raw{font-family:var(--mono);font-size:12.5px;white-space:pre-wrap;word-break
     <div class="note" style="margin:4px 0 12px">嫌翻 Cookie 麻烦？把「<a id="bm" href="#" title="按住拖到浏览器书签栏">一键复制 SESSDATA</a>」拖进书签栏，以后在 bilibili.com 页面点一下书签自动复制，回来粘贴即可。</div>
     <label>授权服务器（留空 = 直连模式，本地配 GLM key）</label>
     <input id="set-server" placeholder="https://lic.example.com" spellcheck="false">
+    <div id="ai-cfg">
+      <label>AI 提供商 + API Key（总结必需，用你自己的 key）</label>
+      <select id="set-provider">
+        <option value="">— 选择提供商 —</option>
+        <option value="zhipu">智谱 GLM（open.bigmodel.cn）</option>
+        <option value="deepseek">DeepSeek（api.deepseek.com）</option>
+      </select>
+      <input id="set-apikey" placeholder="粘贴你的 API Key（留空 = 不修改）" spellcheck="false">
+    </div>
     <div class="acts">
       <button class="cancel" onclick="$('#settings').classList.remove('show')">取消</button>
       <button class="save" id="set-save">保存</button>
@@ -691,7 +700,12 @@ $('#gear').onclick=async()=>{
     $('#set-sessdata').value=d.sessdata_configured?'（已配置，留空保持不变）':'';
     $('#set-sessdata').dataset.configured=d.sessdata_configured?'1':'';
     $('#set-server').value=d.managed_server||'';
+    $('#set-provider').value=d.provider||'';
+    $('#set-apikey').value='';
   }catch(e){}
+  // 网页版才显示 AI 提供商/key 配置；桌面版直连走 config 文件
+  try{ const s=await api('/api/status'); $('#ai-cfg').style.display=s.hosted?'':'none'; }
+  catch(e){ $('#ai-cfg').style.display='none'; }
   $('#settings').classList.add('show');
 };
 $('#set-save').onclick=async()=>{
@@ -700,6 +714,10 @@ $('#set-save').onclick=async()=>{
   if(sd && !sd.startsWith('（')) body.sessdata=sd;   // 占位提示文字不提交
   const sv=$('#set-server').value.trim();
   if(sv!==($('#set-server').defaultValue)) body.managed_server=sv;
+  const prov=$('#set-provider').value;
+  if(prov) body.provider=prov;
+  const ak=$('#set-apikey').value.trim();
+  if(ak) body.api_key=ak;
   if(!Object.keys(body).length){ $('#settings').classList.remove('show'); return toast('没有改动'); }
   try{
     await api('/api/config/save',body);

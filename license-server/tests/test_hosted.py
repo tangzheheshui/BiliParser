@@ -112,3 +112,23 @@ def test_web_session_limit(env):
     assert c3.get("/api/status").status_code == 200
     assert c1.get("/api/status").status_code == 401
     assert c2.get("/api/status").status_code == 200
+
+
+def test_api_key_config_and_encryption(env):
+    hc, db, code = env["hc"], env["db"], env["code"]
+    hc.post("/api/login", json={"code": code})
+    hc.post("/api/config/save", json={"provider": "deepseek", "api_key": "sk-test-123"})
+    d = hc.get("/api/config/get").get_json()
+    assert d["provider"] == "deepseek" and d["api_key_configured"] is True
+    # 落库是密文，不含明文 key
+    raw = sqlite3.connect(db).execute("SELECT api_key_enc, provider FROM user_secrets").fetchone()
+    assert raw[1] == "deepseek" and "sk-test-123" not in raw[0]
+    # 未知提供商拒绝
+    assert hc.post("/api/config/save", json={"provider": "openai"}).status_code == 400
+
+
+def test_summarize_requires_api_key(env):
+    hc, code = env["hc"], env["code"]
+    hc.post("/api/login", json={"code": code})
+    r = hc.post("/api/summarize", json={"url": "https://www.bilibili.com/video/BV1xx", "mode": "meta"})
+    assert r.status_code == 400 and "API Key" in r.get_json()["error"]

@@ -43,6 +43,14 @@ class ApiError(Exception):
 
 MAX_WEB_SESSIONS = 2  # 一个激活码同时最多 2 个网页会话，防共享
 
+# 买家可选 AI 提供商（都走 OpenAI 兼容 /chat/completions）
+PROVIDERS = {
+    "zhipu": {"label": "智谱 GLM", "base_url": "https://open.bigmodel.cn/api/paas/v4/",
+              "model": "glm-4-flash"},
+    "deepseek": {"label": "DeepSeek", "base_url": "https://api.deepseek.com/v1",
+                 "model": "deepseek-chat"},
+}
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
@@ -147,6 +155,19 @@ def create_app(
             g.sessdata = _dec(r["sessdata_enc"], lid) if r and r["sessdata_enc"] else ""
         return g.sessdata
 
+    def _api_cfg(lid: int) -> dict | None:
+        """读买家配置的 AI 提供商 + key；未配置返回 None。"""
+        r = db().execute(
+            "SELECT provider, api_key_enc FROM user_secrets WHERE license_id=?", (lid,)
+        ).fetchone()
+        if not r or not r["provider"] or not r["api_key_enc"]:
+            return None
+        p = PROVIDERS.get(r["provider"])
+        if not p:
+            return None
+        return {"provider": r["provider"], "label": p["label"], "base_url": p["base_url"],
+                "model": p["model"], "api_key": _dec(r["api_key_enc"], lid)}
+
     # ---------------- 登录 / 登出 ----------------
 
     @app.post("/api/login")
@@ -204,13 +225,14 @@ def create_app(
     @app.get("/api/status")
     def api_status():
         row = _license()
+        api = _api_cfg(row["id"])
         return {
             "config_path": "网页版：配置存服务端（按激活码）",
             "sessdata_configured": bool(_sessdata(row["id"])),
-            "glm_key_configured": True,
-            "model": "服务器统一模型",
+            "glm_key_configured": bool(api),
+            "model": (api["model"] if api else "") or "",
             "base_url": "",
-            "endpoint": "managed",
+            "endpoint": "openai",
             "hosted": True,
             "usage": _usage(row),
         }
@@ -226,12 +248,15 @@ def create_app(
     def api_config_get():
         row = _license()
         configured = bool(_sessdata(row["id"]))
+        api = _api_cfg(row["id"])
         return {
             "sessdata_configured": configured,
             "sessdata_hint": "" if configured else "未配置（可选，填了能解锁 AI 字幕）",
+            "provider": api["provider"] if api else "",
+            "api_key_configured": bool(api),
             "managed_server": "",
-            "model": "服务器统一模型",
-            "glm_configured": True,
+            "model": api["model"] if api else "",
+            "glm_configured": bool(api),
             "config_path": "服务端（按激活码加密存储）",
         }
 
@@ -239,18 +264,35 @@ def create_app(
     def api_config_save():
         row = _license()
         data = request.get_json(silent=True) or {}
-        if "sessdata" not in data:
+        lid = row["id"]
+        if not any(k in data for k in ("sessdata", "provider", "api_key")):
             return _err("没有要保存的字段")
-        sd = str(data.get("sessdata") or "").strip()
-        if sd:
-            db().execute(
-                "INSERT INTO user_secrets (license_id, sessdata_enc, updated_at) VALUES (?,?,?) "
-                "ON CONFLICT(license_id) DO UPDATE SET sessdata_enc=excluded.sessdata_enc, "
-                "updated_at=excluded.updated_at",
-                (row["id"], _enc(sd, row["id"]), _utcnow().isoformat()),
-            )
-        else:
-            db().execute("DELETE FROM user_secrets WHERE license_id=?", (row["id"],))
+        r = db().execute(
+            "SELECT sessdata_enc, provider, api_key_enc FROM user_secrets WHERE license_id=?", (lid,)
+        ).fetchone()
+        cur = {
+            "sessdata": _dec(r["sessdata_enc"], lid) if r and r["sessdata_enc"] else "",
+            "provider": r["provider"] if r else "",
+            "api_key": _dec(r["api_key_enc"], lid) if r and r["api_key_enc"] else "",
+        }
+        if "sessdata" in data:
+            cur["sessdata"] = str(data.get("sessdata") or "").strip()
+        if "provider" in data:
+            p = str(data.get("provider") or "").strip()
+            if p and p not in PROVIDERS:
+                return _err(f"未知提供商：{p}")
+            cur["provider"] = p
+        if "api_key" in data:
+            cur["api_key"] = str(data.get("api_key") or "").strip()
+        db().execute(
+            "INSERT INTO user_secrets (license_id, sessdata_enc, provider, api_key_enc, updated_at) "
+            "VALUES (?,?,?,?,?) ON CONFLICT(license_id) DO UPDATE SET "
+            "sessdata_enc=excluded.sessdata_enc, provider=excluded.provider, "
+            "api_key_enc=excluded.api_key_enc, updated_at=excluded.updated_at",
+            (lid, _enc(cur["sessdata"], lid) if cur["sessdata"] else None,
+             cur["provider"] or None, _enc(cur["api_key"], lid) if cur["api_key"] else None,
+             _utcnow().isoformat()),
+        )
         db().commit()
         return api_config_get()
 
@@ -373,14 +415,12 @@ def create_app(
         return summarizer.bili_conclusion_markdown(*r) if r else None
 
     class _Cfg:
-        """summarizer 需要的最小 cfg：AI 全走授权代理，managed_auth 注入会话 token。"""
-        glm_api_key = ""
-        glm_base_url = ""
-        glm_model = ""
-
-        def __init__(self):
-            self.managed_server = app.config["LICENSE_SERVER_URL"]
-            self.managed_auth = {"Authorization": f"Bearer {session['token']}"}
+        """summarizer 需要的 cfg：走买家自己的 key（智谱/DeepSeek，OpenAI 兼容）。"""
+        def __init__(self, api: dict):
+            self.glm_api_key = api["api_key"]
+            self.glm_base_url = api["base_url"]
+            self.glm_model = api["model"]
+            # 不设 managed_server → 走 OpenAI 兼容路径，直连买家选的提供商
 
     @app.post("/api/parse")
     def api_parse():
@@ -416,6 +456,10 @@ def create_app(
         row = _license()
         data = request.get_json(silent=True) or {}
         mode = str(data.get("mode") or "standard")
+        api = _api_cfg(row["id"])
+        if not api:
+            return _err("请先在设置里配置 AI 提供商和 API Key", 400,
+                       hint="支持智谱 GLM 或 DeepSeek，用你自己的 key")
         p = None
         if mode == "custom":
             p = next((x for x in _prompts(row["id"]) if x["id"] == data.get("prompt_id")), None)
@@ -423,7 +467,7 @@ def create_app(
                 return _err(f"模板不存在：{data.get('prompt_id')}", 404)
         entry = _entry(str(data.get("url") or ""), data.get("page"))
         title = entry["info"].get("title", "")
-        cfg = _Cfg()
+        cfg = _Cfg(api)
         if mode == "meta":
             return {"mode": mode, "markdown": summarizer.summarize_meta(_meta_ctx(entry), title, cfg)}
         if mode == "custom":
