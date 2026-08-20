@@ -43,7 +43,7 @@ button{cursor:pointer}
 <table>
   <tr>
     <th>ID</th><th>激活码</th><th>备注</th><th>状态</th><th>绑定设备</th>
-    <th>激活时间</th><th>最近活跃</th><th>今日用量/配额</th><th>有效期</th><th>解绑次数</th><th>操作</th>
+    <th>首次使用</th><th>最近活跃</th><th>今日用量/配额</th><th>有效期</th><th>解绑次数</th><th>操作</th>
   </tr>
   {% for r in rows %}
   <tr>
@@ -52,13 +52,14 @@ button{cursor:pointer}
     <td>{{ r.note or '' }}</td>
     <td>
       {% if not r.is_active %}<span class="off">已禁用</span>
-      {% elif r.device_fingerprint %}<span class="on">已激活</span>
+      {% elif r.device_fingerprint %}<span class="on">已激活·桌面</span>
+      {% elif r.web_sessions %}<span class="on">已使用·网页</span>
       {% else %}<span class="muted">未激活</span>{% endif %}
     </td>
     <td class="muted" title="{{ r.device_fingerprint or '' }}">
       {{ (r.device_fingerprint or '')[:16] }}
     </td>
-    <td class="muted">{{ (r.activated_cn or '')[:16] or '—' }}</td>
+    <td class="muted">{{ (r.activated_cn or r.web_first_cn or '—')[:16] }}</td>
     <td class="muted">{{ r.last_active or '—' }}</td>
     <td>{{ r.used_today }}/{{ r.daily_quota }}<br><span class="muted">累计 {{ r.total_used }}</span></td>
     <td>{{ r.expires_at or '永久' }}</td>

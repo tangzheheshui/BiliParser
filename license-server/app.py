@@ -329,12 +329,14 @@ def create_app(
         return redirect(f"/admin?key={app.config['ADMIN_KEY']}")
 
     def _all_rows(dbconn):
-        """列表页数据：今日用量 + 用户画像（累计用量/最近活跃/激活时间，转北京时间）。"""
+        """列表页数据：今日用量 + 用户画像（累计用量/最近活跃/首次使用时间/网页会话数）。"""
         return dbconn.execute(
             "SELECT l.*, COALESCE(u.count,0) AS used_today, "
             "COALESCE((SELECT SUM(x.count) FROM usage x WHERE x.license_id=l.id),0) AS total_used, "
             "(SELECT MAX(x.day) FROM usage x WHERE x.license_id=l.id) AS last_active, "
-            "datetime(l.activated_at,'+8 hours') AS activated_cn "
+            "datetime(l.activated_at,'+8 hours') AS activated_cn, "
+            "(SELECT COUNT(*) FROM web_sessions x WHERE x.license_id=l.id) AS web_sessions, "
+            "datetime((SELECT MIN(x.created_at) FROM web_sessions x WHERE x.license_id=l.id),'+8 hours') AS web_first_cn "
             "FROM licenses l "
             "LEFT JOIN usage u ON u.license_id=l.id AND u.day=date('now','localtime') "
             "ORDER BY l.id DESC"
