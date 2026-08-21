@@ -18,6 +18,7 @@ import hmac
 import os
 import secrets
 import sqlite3
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -238,16 +239,22 @@ def create_app(
         # 转发 GLM：模型由服务器统一指定，客户端传什么都不算数（成本可控）
         if not app.config["GLM_API_KEY"]:
             return err("服务器未配置 GLM_API_KEY", 500)
-        try:
-            resp = httpx.post(
-                app.config["GLM_BASE_URL"].rstrip("/") + "/chat/completions",
-                json={"model": app.config["GLM_MODEL"], "messages": messages,
-                      "temperature": body.get("temperature", 0.3)},
-                headers={"Authorization": f"Bearer {app.config['GLM_API_KEY']}"},
-                timeout=180,
-            )
-        except httpx.HTTPError as e:
-            return err(f"上游 AI 请求失败：{e.__class__.__name__}", 502)
+        # 免费模型高峰期偶发 429「访问量过大」，重试吞掉瞬时限流
+        resp = None
+        for attempt in range(3):
+            try:
+                resp = httpx.post(
+                    app.config["GLM_BASE_URL"].rstrip("/") + "/chat/completions",
+                    json={"model": app.config["GLM_MODEL"], "messages": messages,
+                          "temperature": body.get("temperature", 0.3)},
+                    headers={"Authorization": f"Bearer {app.config['GLM_API_KEY']}"},
+                    timeout=180,
+                )
+            except httpx.HTTPError as e:
+                return err(f"上游 AI 请求失败：{e.__class__.__name__}", 502)
+            if resp.status_code != 429 or attempt == 2:
+                break
+            time.sleep(1.5)
 
         if resp.status_code == 200:  # 成功才计费
             db().execute(
