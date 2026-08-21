@@ -704,7 +704,7 @@ async function loadStatus(){
       // 网页版：激活码授权 + 买家自配 AI key
       head=`
       <div class="row"><span>授权</span><span class="badge ok">已激活</span></div>
-      <div class="row"><span>AI 提供商</span><span class="badge ${d.glm_key_configured?'ok':'no'}">${d.provider||'未配置'}</span></div>`;
+      <div class="row"><span>AI</span><span class="badge ok">${d.provider||'服务器免费模型'}</span></div>`;
     }else if(lic.server){
       // 桌面版发行模式：服务器代理 + 每日配额
       const u=lic.usage;
@@ -737,7 +737,6 @@ $('#gear').onclick=async()=>{
     $('#set-server').value=d.managed_server||'';
     $('#set-provider').value=d.provider||'';
     $('#set-apikey').value=d.api_key_configured?'（已配置，留空保持不变）':'';
-    $('#set-apikey').classList.toggle('req', !d.api_key_configured);
   }catch(e){}
   // AI 提供商配置对所有版本可见（服务器模型=默认免配置）
   $('#settings').classList.add('show');

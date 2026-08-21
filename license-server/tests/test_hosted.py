@@ -127,8 +127,10 @@ def test_api_key_config_and_encryption(env):
     assert hc.post("/api/config/save", json={"provider": "openai"}).status_code == 400
 
 
-def test_summarize_requires_api_key(env):
+def test_summarize_no_key_falls_back_to_server(env):
+    """未配 key 不再被拦（走服务器免费模型兜底），报错是 URL 无效而非缺 key。"""
     hc, code = env["hc"], env["code"]
     hc.post("/api/login", json={"code": code})
-    r = hc.post("/api/summarize", json={"url": "https://www.bilibili.com/video/BV1xx", "mode": "meta"})
-    assert r.status_code == 400 and "API Key" in r.get_json()["error"]
+    r = hc.post("/api/summarize", json={"url": "BV1xx", "mode": "meta"})
+    assert r.status_code == 400
+    assert "API Key" not in r.get_json()["error"]  # 已越过 key 检查

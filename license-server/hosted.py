@@ -416,12 +416,16 @@ def create_app(
         return summarizer.bili_conclusion_markdown(*r) if r else None
 
     class _Cfg:
-        """summarizer 需要的 cfg：走买家自己的 key（智谱/DeepSeek，OpenAI 兼容）。"""
-        def __init__(self, api: dict):
-            self.glm_api_key = api["api_key"]
-            self.glm_base_url = api["base_url"]
-            self.glm_model = api["model"]
-            # 不设 managed_server → 走 OpenAI 兼容路径，直连买家选的提供商
+        """AI 配置：买家配了 key 用买家直连；没配走服务器免费模型。"""
+        def __init__(self, api: dict | None):
+            if api:
+                self.glm_api_key = api["api_key"]
+                self.glm_base_url = api["base_url"]
+                self.glm_model = api["model"]
+            else:
+                # 没配 key → 走服务器代理（服务器用免费模型 glm-4.7-flash）
+                self.managed_server = app.config["LICENSE_SERVER_URL"]
+                self.managed_auth = {"Authorization": f"Bearer {session['token']}"}
 
     @app.post("/api/parse")
     def api_parse():
@@ -457,10 +461,7 @@ def create_app(
         row = _license()
         data = request.get_json(silent=True) or {}
         mode = str(data.get("mode") or "standard")
-        api = _api_cfg(row["id"])
-        if not api:
-            return _err("请先在设置里配置 AI 提供商和 API Key", 400,
-                       hint="支持智谱 GLM 或 DeepSeek，用你自己的 key")
+        api = _api_cfg(row["id"])  # None = 买家没配 key，走服务器免费模型
         p = None
         if mode == "custom":
             p = next((x for x in _prompts(row["id"]) if x["id"] == data.get("prompt_id")), None)
