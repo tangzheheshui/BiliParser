@@ -278,6 +278,8 @@ def create_app(
         target = (Path(app.config["DOWNLOADS_DIR"]) / fname).resolve()
         if base not in target.parents or not target.is_file():  # 防路径穿越
             return err("文件不存在", 404)
+        if fname.endswith(".json"):  # version.json 供官网页读版本号，直接返回
+            return app.response_class(target.read_bytes(), mimetype="application/json")
         # send_file 流式分块发送：大安装包不会占满内存，慢客户端也不会
         # 因 worker 长时间无响应被杀（实测整读内存版会导致下载中断）
         return send_file(target, as_attachment=True, download_name=target.name,
