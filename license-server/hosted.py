@@ -280,9 +280,13 @@ def create_app(
             cur["sessdata"] = str(data.get("sessdata") or "").strip()
         if "provider" in data:
             p = str(data.get("provider") or "").strip()
+            if p == "server":  # 服务器免费模型 = 清空买家 key
+                p = ""
             if p and p not in PROVIDERS:
                 return _err(f"未知提供商：{p}")
             cur["provider"] = p
+            if not p:
+                cur["api_key"] = ""  # 切回服务器模型时清掉旧 key
         if "api_key" in data:
             cur["api_key"] = str(data.get("api_key") or "").strip()
         db().execute(

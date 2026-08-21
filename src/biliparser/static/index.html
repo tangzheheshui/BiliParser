@@ -735,12 +735,21 @@ $('#gear').onclick=async()=>{
     $('#set-sessdata').value=d.sessdata_configured?'（已配置，留空保持不变）':'';
     $('#set-sessdata').dataset.configured=d.sessdata_configured?'1':'';
     $('#set-server').value=d.managed_server||'';
-    $('#set-provider').value=d.provider||'';
+    $('#set-provider').value=d.provider||'server';
     $('#set-apikey').value=d.api_key_configured?'（已配置，留空保持不变）':'';
   }catch(e){}
+  syncProviderUI();
   // AI 提供商配置对所有版本可见（服务器模型=默认免配置）
   $('#settings').classList.add('show');
 };
+function syncProviderUI(){
+  const p=$('#set-provider').value;
+  const needKey = (p==='zhipu' || p==='deepseek');
+  $('#set-apikey').disabled = !needKey;
+  if(needKey){ $('#set-apikey').placeholder='API Key（选了自有提供商才需要）'; }
+  else { $('#set-apikey').placeholder='用服务器免费模型，无需填 key'; $('#set-apikey').value=''; }
+}
+$('#set-provider').onchange=syncProviderUI;
 $('#set-save').onclick=async()=>{
   const body={};
   const sd=$('#set-sessdata').value.trim();
