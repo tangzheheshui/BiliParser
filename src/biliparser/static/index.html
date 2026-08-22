@@ -139,6 +139,14 @@ body{background:var(--bg);color:var(--text);font:14px/1.6 -apple-system,"PingFan
 .md strong{color:var(--accent2)}
 .md blockquote{border-left:3px solid var(--accent);padding-left:12px;color:var(--dim);margin:8px 0}
 .md hr{border:none;border-top:1px solid var(--line);margin:14px 0}
+/* 总结「醒目」增强：章节标题 accent 色条 + 一句话总结高亮卡 + 列表 marker */
+.md .sec{color:var(--accent2);border-left:3px solid var(--accent);padding-left:10px;margin:16px 0 8px}
+.md .sec:first-child{margin-top:0}
+.md li::marker{color:var(--accent)}
+.md .callout{background:linear-gradient(135deg,rgba(77,163,255,.16),rgba(126,200,255,.05));
+  border:1px solid rgba(77,163,255,.45);border-radius:12px;padding:14px 18px;margin:6px 0 14px}
+.md .callout .sec{border-left:none;padding-left:0;margin:0 0 8px;font-size:14px;color:#9ecbff}
+.md .callout p{margin:0;font-size:15px;line-height:1.75;color:#eaf2ff}
 .transcript{font-family:var(--mono);font-size:12.5px;line-height:1.9;white-space:pre-wrap;word-break:break-all}
 .ts{color:var(--accent);background:rgba(77,163,255,.1);border-radius:4px;padding:0 3px;cursor:pointer}
 .ts:hover{background:rgba(77,163,255,.3)}
@@ -146,18 +154,6 @@ code.tsj{color:var(--accent)!important;cursor:pointer}
 code.tsj:hover{background:rgba(77,163,255,.3);border-color:var(--accent)!important}
 pre.raw{font-family:var(--mono);font-size:12.5px;white-space:pre-wrap;word-break:break-all;color:var(--text)}
 
-/* 思维导图树 */
-.tree{list-style:none;margin:0;padding:0}
-.tree ul{list-style:none;margin:0;padding-left:22px;border-left:1px dashed var(--line)}
-.tree li{margin:4px 0;position:relative}
-.tree .tw{display:inline-block;width:18px;height:18px;line-height:18px;text-align:center;color:var(--dim);cursor:pointer;border-radius:4px;font-size:11px;user-select:none;vertical-align:middle}
-.tree .tw:hover{color:var(--accent2);background:rgba(77,163,255,.12)}
-.tree .tw:before{content:'▾'}
-.tree .tw.leaf{cursor:default;color:var(--line)}
-.tree .tw.leaf:before{content:'•'}
-.tree li.collapsed>ul{display:none}
-.tree li.collapsed>.tw:before{content:'▸'}
-.tree .tn{display:inline-block;padding:2px 9px;border:1px solid var(--line);border-radius:6px;background:var(--panel2);color:var(--text);font-size:13px;margin:1px 0;vertical-align:middle}
 /* ---------- 网页版登录门（托管模式未登录时显示；本地直连版不触发） ---------- */
 #loginGate{position:fixed;inset:0;background:rgba(8,10,14,.72);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;z-index:99}
 #loginGate[hidden]{display:none}
@@ -184,7 +180,7 @@ pre.raw{font-family:var(--mono);font-size:12.5px;white-space:pre-wrap;word-break
     <div class="pane">
       <div class="sec-title">生成类型</div>
       <select id="gen-type" class="gensel"></select>
-      <button class="btn primary" id="b-gen" disabled style="margin-top:8px">⏵ 生成文本<span class="sub">结果进入右侧对应页签</span></button>
+      <button class="btn primary" id="b-gen" disabled style="margin-top:8px">⏵ 生成<span class="sub">一次产出：字幕 · 总结 · 评论</span></button>
 
       <div class="sec-title">自定义模板</div>
       <div id="plist"><div class="empty-hint">（暂无模板，点下方新建）</div></div>
@@ -226,7 +222,6 @@ pre.raw{font-family:var(--mono);font-size:12.5px;white-space:pre-wrap;word-break
       <div id="state"></div>
       <button class="tbtn" id="copy">复制</button>
       <button class="tbtn" id="export">导出 .md</button>
-      <button class="tbtn" id="expimg" style="display:none">导出图片</button>
       <button class="tbtn" id="clear">清空</button>
     </div>
     <div id="content"><div class="empty">尚未生成内容</div></div>
@@ -299,14 +294,12 @@ let license = null;             // /api/license/state 结果（managed 模式才
 
 const FIXED_TABS = [
   {id:'subtitle', label:'原始字幕'},
-  {id:'standard', label:'标准总结'},
-  {id:'detailed', label:'详尽总结'},
-  {id:'mindmap',  label:'思维导图'},
-  {id:'meta',     label:'元数据+热评'},
+  {id:'summary',  label:'总结'},
+  {id:'meta',     label:'评论'},
 ];
 
 function ws(){ return cur ? workspaces.get(cur) : null }
-function newWs(d){ return {video:d, tabs:{subtitle:null,standard:null,detailed:null,meta:null,mindmap:null}, custom:{}, metaAI:null, active:'subtitle'} }
+function newWs(d){ return {video:d, tabs:{subtitle:null,summary:null,meta:null}, active:'subtitle'} }
 
 /* ---------- 极简 Markdown 渲染 ---------- */
 function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
@@ -317,67 +310,28 @@ function inlineMd(s){
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g,'<a href="$2" target="_blank">$1</a>');
 }
 function renderMd(md){
-  const out=[]; let list=null;
+  const out=[]; let list=null, callout=false;
   const flush=()=>{ if(list){out.push('</ul>');list=null} };
+  const closeCallout=()=>{ if(callout){out.push('</div>');callout=false} };
   for(const raw of md.split('\n')){
     const line=raw.replace(/\s+$/,'');
     if(!line.trim()){flush();continue}
     let m;
-    if(m=line.match(/^(#{1,3})\s+(.*)/)){flush();const h=m[1].length+1;out.push(`<h${h}>${inlineMd(m[2])}</h${h}>`)}
+    if(m=line.match(/^(#{1,3})\s+(.*)/)){
+      flush();
+      const lvl=m[1].length, txt=m[2], isOneline=txt.includes('一句话总结');
+      if(lvl>=2 && !isOneline) closeCallout();
+      if(isOneline){ closeCallout(); out.push('<div class="callout">'); callout=true; }
+      out.push(`<h${lvl+1} class="sec">${inlineMd(txt)}</h${lvl+1}>`);
+    }
     else if(m=line.match(/^\s*[-*]\s+(.*)/)){if(!list){out.push('<ul>');list=1}out.push(`<li>${inlineMd(m[1])}</li>`)}
-    else if(/^(-{3,}|\*{3,})$/.test(line.trim())){flush();out.push('<hr>')}
+    else if(/^(-{3,}|\*{3,})$/.test(line.trim())){flush();closeCallout();out.push('<hr>')}
     else {flush();out.push(`<p>${inlineMd(line)}</p>`)}
   }
-  flush(); return out.join('\n');
+  flush(); closeCallout(); return out.join('\n');
 }
 function renderTranscript(text){
   return '<div class="transcript">'+esc(text).replace(/\[(\d{1,2}:\d{2}(?::\d{2})?)\]/g,'<span class="ts">[$1]</span>')+'</div>';
-}
-
-/* ---------- 思维导图：解析 / 渲染 / 导出 ---------- */
-function stripMindmap(md){const i=(md||'').indexOf('## 思维导图');return i>=0?md.slice(0,i).replace(/\s+$/,''):md}
-function parseTree(text){
-  const root=[]; const stack=[{depth:-1,children:root}];
-  for(const raw of (text||'').split('\n')){
-    const m=raw.match(/^\s*[-*•·]\s+(.+?)\s*$/); if(!m)continue;
-    const depth=Math.round((raw.match(/^ */)[0].length)/2);
-    const node={t:m[1],c:[]};
-    while(stack.length>1&&stack[stack.length-1].depth>=depth)stack.pop();
-    stack[stack.length-1].children.push(node);
-    stack.push({depth,children:node.c});
-  }
-  return root;
-}
-function renderTree(text){
-  const nodes=parseTree(text);
-  if(!nodes.length)return '<div class="empty">无思维导图数据</div>';
-  const walk=list=>'<ul class="tree">'+list.map(n=>{
-    const tw=n.c.length?'<span class="tw"></span>':'<span class="tw leaf"></span>';
-    return `<li>${tw}<span class="tn">${esc(n.t)}</span>${n.c.length?walk(n.c):''}</li>`;
-  }).join('')+'</ul>';
-  return walk(nodes);
-}
-function toMermaid(text, title){
-  const clean=s=>String(s||'').replace(/[\[\](){}<>"]/g,' ').replace(/\s+/g,' ').trim();
-  const walk=(list,ind)=>list.map(n=>'  '.repeat(ind)+clean(n.t)+'\n'+walk(n.c,ind+1)).join('');
-  return 'mindmap\n  root(('+clean(title||'视频')+'))\n'+walk(parseTree(text),1);
-}
-function escXml(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
-function mindmapSVG(text, title){
-  const nodes=parseTree(text); if(!nodes.length)return null;
-  let next=0,maxDepth=0;
-  const assign=(list,depth)=>{maxDepth=Math.max(maxDepth,depth);for(const n of list){if(n.c.length){assign(n.c,depth+1);const ys=n.c.map(c=>c.y);n.y=(ys[0]+ys[ys.length-1])/2}else n.y=next++}};
-  assign(nodes,0);
-  const root={t:title||'视频',c:nodes,y:(nodes[0].y+nodes[nodes.length-1].y)/2};
-  const ROW=30,X0=16,DX=190,TOP=24,H=next*ROW+2*TOP,W=X0+(maxDepth+2)*DX+160;
-  let inner='';
-  const walk=(list,depth,px,py)=>{for(const n of list){const x=X0+depth*DX,y=n.y*ROW+TOP;
-    if(px!=null)inner+=`<path d="M${px} ${py} C${px+DX*0.45} ${py} ${x-DX*0.45} ${y} ${x} ${y}" stroke="#2a3542" stroke-width="1.2" fill="none"/>`;
-    inner+=`<rect x="${x+4}" y="${y-11}" width="${escXml(n.t).length*13+16}" height="22" rx="6" fill="#1d2530" stroke="#2a3542"/>`;
-    inner+=`<text x="${x+12}" y="${y+4}" font-size="13" fill="#dce4ee">${escXml(n.t)}</text>`;
-    if(n.c.length)walk(n.c,depth+1,x,y)}};
-  walk([root],0,null,null);
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif"><rect width="100%" height="100%" fill="#101418"/>${inner}</svg>`;
 }
 
 /* ---------- UI 基础 ---------- */
@@ -474,12 +428,6 @@ $('#content').addEventListener('click',e=>{
   const el=e.target.closest('.ts,.tsj'); if(!el||!ws())return;
   const m=el.textContent.match(/(\d{1,2}:\d{2}(?::\d{2})?)/); if(m)seekTo(tsToSec(m[1]));
 });
-/* 思维导图节点折叠 */
-$('#content').addEventListener('click',e=>{
-  const tw=e.target.closest('.tw'); if(!tw||tw.classList.contains('leaf'))return;
-  tw.parentElement.classList.toggle('collapsed');
-});
-
 function renderMiddle(){
   const w=ws(); if(!w)return;
   const d=w.video;
@@ -501,48 +449,49 @@ function renderMiddle(){
 }
 
 /* ---------- 生成类型：下拉 + 派发 ---------- */
-const PRESETS=[
-  {v:'standard',label:'标准总结（要点/时间线/关键词）'},
-  {v:'detailed',label:'详尽总结（不漏话题/数据/金句）'},
-  {v:'subtitle',label:'拉取字幕（不花 LLM）'},
-  {v:'meta',label:'元数据 + 热评（不花 LLM）'},
-  {v:'metaai',label:'降级 AI 总结（无字幕时推断）'},
-];
 function renderTypeSelect(){
-  const sel=$('#gen-type'); const keep=sel.value||'standard';
-  sel.innerHTML='<optgroup label="预设">'+PRESETS.map(p=>`<option value="${p.v}">${p.label}</option>`).join('')+'</optgroup>'
-    +(prompts.length?'<optgroup label="自定义模板">'+prompts.map(p=>`<option value="custom:${p.id}">${esc(p.name)}</option>`).join('')+'</optgroup>':'');
-  sel.value=[...sel.options].some(o=>o.value===keep)?keep:'standard';
+  const sel=$('#gen-type'); const keep=sel.value||'system';
+  sel.innerHTML='<option value="system">系统默认（全面精简）</option>'
+    +(prompts.length?'<optgroup label="自定义模板">'+prompts.map(p=>`<option value="custom:${p.id}">${esc(p.name)}</option>`).join('')+'</optgroup>':'')
+    +'<option value="__create__">＋ 创建模板…</option>';
+  sel.value=[...sel.options].some(o=>o.value===keep)?keep:'system';
 }
+$('#gen-type').onchange=()=>{
+  if($('#gen-type').value==='__create__'){ openEditor(null); renderTypeSelect(); }
+};
 $('#b-gen').onclick=guard(async()=>{
-  const v=$('#gen-type').value;
-  if(v==='subtitle'){
-    setState('拉取字幕中…（B 站接口不稳定，可能重试）','busy');
-    const d=await api('/api/subtitle',{url:cur,page:ws().video.page});
-    ws().tabs.subtitle=d.transcript; ws().covSubtitle=d.coverage; ws().subConsistent=d.consistent!==false;
-    renderTabbar(); showTab('subtitle'); setState(`✓ ${d.lines} 行字幕（${d.lan}）`);
-  }else if(v==='standard'||v==='detailed'){
-    setState(`AI ${v==='standard'?'标准':'详尽'}总结中…`,'busy');
-    const d=await api('/api/summarize',{url:cur,page:ws().video.page,mode:v});
-    ws().tabs[v]=stripMindmap(d.markdown);
-    ws().tabs.mindmap=d.mindmap||null;
-    ws().fallback=d.fallback||null;
-    renderTabbar(); showTab(v); setState(`✓ ${v==='standard'?'标准':'详尽'}总结完成（含思维导图）`);
-  }else if(v==='meta'){
-    setState('拉取标签与热评中…','busy');
-    const d=await api('/api/meta',{url:cur});
-    ws().tabs.meta=d.context; renderTabbar(); showTab('meta'); setState('✓ 元数据已更新');
-  }else if(v==='metaai'){
-    setState('AI 降级总结中…','busy');
+  const v=$('#gen-type').value, w=ws(), page=w.video.page;
+  const done=[], fail=[];
+  // 1/3 字幕
+  setState('生成中… 1/3 拉取字幕','busy');
+  try{
+    const d=await api('/api/subtitle',{url:cur,page});
+    w.tabs.subtitle=d.transcript; w.covSubtitle=d.coverage; w.subConsistent=d.consistent!==false;
+    done.push('字幕');
+  }catch(e){ fail.push('字幕'); }
+  // 2/3 总结（系统默认 or 自定义模板）
+  setState('生成中… 2/3 AI 总结','busy');
+  try{
+    let d;
+    if(v.startsWith('custom:')){
+      d=await api('/api/summarize',{url:cur,page,mode:'custom',prompt_id:v.slice(7)});
+    }else{
+      d=await api('/api/summarize',{url:cur,page,mode:'standard'});
+    }
+    w.tabs.summary=d.markdown; w.fallback=d.fallback||null;
+    done.push('总结');
+  }catch(e){ fail.push('总结'); }
+  // 3/3 评论（元数据+热评推断）
+  setState('生成中… 3/3 评论','busy');
+  try{
     const d=await api('/api/summarize',{url:cur,mode:'meta'});
-    ws().metaAI=d.markdown; showTab('meta'); setState('✓ 降级总结完成');
-  }else if(v.startsWith('custom:')){
-    const id=v.slice(7), p=prompts.find(x=>x.id===id);
-    if(!p)return toast('模板不存在，请重新选择');
-    setState(`AI「${p.name}」生成中…`,'busy');
-    const d=await api('/api/summarize',{url:cur,page:ws().video.page,mode:'custom',prompt_id:id});
-    ws().custom[id]=d.markdown; renderTabbar(); showTab('custom:'+id); setState(`✓「${p.name}」完成`);
-  }
+    w.tabs.meta=d.markdown;
+    done.push('评论');
+  }catch(e){ fail.push('评论'); }
+  renderTabbar();
+  showTab(w.tabs.summary?'summary':(w.tabs.subtitle?'subtitle':'meta'));
+  if(fail.length) setState(`完成 ${done.join('、')||'无'}；失败 ${fail.join('、')}`,'err');
+  else setState(`✓ 已生成：${done.join(' / ')}`);
 });
 
 /* ---------- 自定义模板 ---------- */
@@ -590,71 +539,45 @@ async function loadPrompts(){
 /* ---------- 右侧页签（内置 + 自定义动态） ---------- */
 function renderTabbar(){
   const w=ws();
-  const fixed=FIXED_TABS.map(t=>{
-    const done=!!(w&&w.tabs[t.id])||(t.id==='meta'&&w&&w.metaAI);
+  const tabs=FIXED_TABS.map(t=>{
+    const done=!!(w&&w.tabs[t.id]);
     return `<div class="tab ${w&&w.active===t.id?'active':''}" data-t="${t.id}">${t.label}<span class="n ${done?'show':''}">✓</span></div>`;
   }).join('');
-  const customs=w?Object.entries(w.custom).map(([id,md])=>{
-    const p=prompts.find(x=>x.id===id);
-    return `<div class="tab custom-tab ${w.active==='custom:'+id?'active':''}" data-t="custom:${id}">★ ${esc(p?p.name:id)}<span class="n show">✓</span></div>`;
-  }).join(''):'';
-  $('#tabs').innerHTML=fixed+customs||'<div class="tab" style="cursor:default">先解析一个视频</div>';
+  $('#tabs').innerHTML=tabs||'<div class="tab" style="cursor:default">先解析一个视频</div>';
   $('#tabs').querySelectorAll('.tab[data-t]').forEach(el=>el.onclick=()=>showTab(el.dataset.t));
 }
 
 function showTab(t){
   const w=ws(); if(!w){setContent('<div class="empty">先解析一个视频</div>');return}
   w.active=t; renderTabbar();
-  $('#expimg').style.display = t==='mindmap' ? '' : 'none';
-  if(t.startsWith('custom:')){
-    const id=t.slice(7), md=w.custom[id];
-    const p=prompts.find(x=>x.id===id);
-    setContent(md?`<div class="hint-box">模板：${esc(p?p.prompt:'')}</div><div class="md">${renderMd(md)}</div>`
-      :'<div class="empty">内容不存在（模板可能已删除）</div>');
-    return;
-  }
   if(t==='subtitle'){
-    if(!w.tabs.subtitle){setContent('<div class="empty">在左侧选择「拉取字幕」生成</div>')}
+    if(!w.tabs.subtitle){setContent('<div class="empty">点击左侧「生成」拉取字幕</div>')}
     else{
       const crossWarn=w.subConsistent===false
-        ?'<div class="err-box">⚠ 多次拉取的字幕内容不一致——B 站字幕源疑似串台，这份字幕可能不属于本视频！总结前请先核对内容</div>':'';
+        ?'<div class="err-box">⚠ 多次拉取的字幕内容不一致——B 站字幕源疑似串台，这份字幕可能不属于本视频！</div>':'';
       const warn=w.covSubtitle!=null&&w.covSubtitle<0.6
         ?`<div class="hint-box">⚠ 此字幕仅覆盖视频 ${Math.round(w.covSubtitle*100)}%（可能截断），基于它的总结会缺内容</div>`:'';
       setContent(crossWarn+warn+renderTranscript(w.tabs.subtitle));
     }
-  }else if(t==='meta'){
-    if(!w.tabs.meta&&!w.metaAI){setContent('<div class="empty">点击左侧「元数据 + 热评」或「降级 AI 总结」</div>');return}
-    let html='';
-    if(w.metaAI) html+=`<div class="hint-box">以下为推断性总结（基于元数据+热评，非字幕）</div><div class="md">${renderMd(w.metaAI)}</div><hr style="border:none;border-top:1px solid var(--line);margin:16px 0">`;
-    if(w.tabs.meta) html+=`<div class="sec-title">原始材料</div><pre class="raw">${esc(w.tabs.meta)}</pre>`;
-    setContent(html);
-  }else if(t==='mindmap'){
-    if(!w.tabs.mindmap){setContent('<div class="empty">先点击左侧「标准总结」或「详尽总结」——思维导图随总结一起产出</div>')}
-    else setContent('<div class="hint-box">思维导图（随总结自动生成，节点可折叠）</div>'+renderTree(w.tabs.mindmap));
-  }else{
+  }else if(t==='summary'){
+    if(!w.tabs.summary){setContent('<div class="empty">点击左侧「生成」产出总结</div>');return}
     let warn='';
     if(w.fallback==='conclusion') warn='<div class="hint-box">⚠ 该视频无可用字幕，以下为 B 站官方 AI 总结（非逐字字幕）</div>';
     else if(w.fallback==='meta') warn='<div class="err-box">⚠ 该视频无字幕，以下为推断性总结（质量有限）。配置 SESSDATA 可获得完整字幕总结</div>';
-    setContent(w.tabs[t]?warn+`<div class="md">${renderMd(w.tabs[t])}</div>`
-      :`<div class="empty">点击左侧「${t==='standard'?'标准总结':'详尽总结'}」</div>`);
+    setContent(warn+`<div class="md">${renderMd(w.tabs.summary)}</div>`);
+  }else if(t==='meta'){
+    if(!w.tabs.meta){setContent('<div class="empty">点击左侧「生成」产出评论总结</div>');return}
+    setContent('<div class="hint-box">以下为推断性总结（基于元数据+热评，非字幕）</div><div class="md">'+renderMd(w.tabs.meta)+'</div>');
   }
 }
 
 /* ---------- 工具栏 ---------- */
 function activeRaw(){
   const w=ws(); if(!w)return null;
-  if(w.active.startsWith('custom:'))return w.custom[w.active.slice(7)];
-  if(w.active==='meta')return [w.metaAI,w.tabs.meta].filter(Boolean).join('\n\n---\n\n')||null;
-  if(w.active==='mindmap')return w.tabs.mindmap;
   return w.tabs[w.active];
 }
 $('#copy').onclick=async()=>{
   const w=ws(); if(!w)return toast('先解析一个视频');
-  if(w.active==='mindmap'){
-    if(!w.tabs.mindmap)return toast('无思维导图');
-    await navigator.clipboard.writeText(toMermaid(w.tabs.mindmap, w.video.title)); toast('已复制 Mermaid 思维导图');
-    return;
-  }
   const raw=activeRaw(); if(!raw)return toast('当前无内容');
   await navigator.clipboard.writeText(raw); toast('已复制到剪贴板');
 };
@@ -665,32 +588,16 @@ $('#export').onclick=()=>{
   const doc=`# ${v.title}\n\n- UP 主：${v.owner}\n- 链接：https://www.bilibili.com/video/${v.bvid}\n- 时长：${fmtDur(v.duration)}\n\n---\n\n${raw}\n`;
   let name=v.bvid;
   if(w.active==='subtitle')name+='-字幕';
-  else if(w.active==='detailed')name+='-详细';
-  else if(w.active==='mindmap')name+='-思维导图';
-  else if(w.active==='meta')name+='-元数据';
-  else if(w.active.startsWith('custom:')){
-    const p=prompts.find(x=>x.id===w.active.slice(7)); name+='-'+(p?p.name:'自定义');
-  }
+  else if(w.active==='summary')name+='-总结';
+  else if(w.active==='meta')name+='-评论';
   const a=document.createElement('a');
   a.href=URL.createObjectURL(new Blob([doc],{type:'text/markdown'}));
   a.download=name+'.md'; a.click(); URL.revokeObjectURL(a.href);
   toast('已导出 '+name+'.md');
 };
-$('#expimg').onclick=()=>{
-  const w=ws(); if(!w)return toast('先解析一个视频');
-  if(w.active!=='mindmap'||!w.tabs.mindmap)return toast('无思维导图');
-  const svg=mindmapSVG(w.tabs.mindmap, w.video.title);
-  if(!svg)return toast('无思维导图');
-  const a=document.createElement('a');
-  a.href=URL.createObjectURL(new Blob([svg],{type:'image/svg+xml'}));
-  a.download=w.video.bvid+'-思维导图.svg'; a.click(); URL.revokeObjectURL(a.href);
-  toast('已导出 SVG 图片');
-};
 $('#clear').onclick=()=>{
   const w=ws(); if(!w)return toast('先解析一个视频');
-  if(w.active.startsWith('custom:'))delete w.custom[w.active.slice(7)];
-  else if(w.active==='meta')w.metaAI=null;
-  else w.tabs[w.active]=null;
+  w.tabs[w.active]=null;
   renderTabbar(); showTab(w.active); toast('已清空当前页');
 };
 
@@ -722,11 +629,9 @@ async function loadStatus(){
 /* ---------- 激活门与设置 ---------- */
 async function loadLicense(){
   try{
-    const s=await api('/api/license/state');
-    license=s;
-    if(s.server && !s.activated){ location.href='/activate.html'; return false; }
-    return true;
-  }catch(e){ return true; }  // 拿不到状态不拦人（本地直连模式）
+    license=await api('/api/license/state');
+    return true;   // 暂不设激活门：未激活也不跳 activate.html（后续改试用模式）
+  }catch(e){ return true; }
 }
 $('#gear').onclick=async()=>{
   try{

@@ -256,9 +256,13 @@ def api_summarize(url: str, page: int | None, mode: str, cfg, prompt_id: str | N
         context = _get_meta(entry, cfg)
         return {"mode": mode, "markdown": summarizer.summarize_meta(context, title, cfg),
                 "mindmap": None, "fallback": "meta"}
-    md = summarizer.summarize(t["text"], title, cfg, detailed=(mode == "detailed"))
+    md = summarizer.summarize(
+        t["text"], title, cfg,
+        detailed=(mode == "detailed"),
+        include_mindmap=(mode == "detailed"),
+    )
     return {"mode": mode, "lan": t["lan_doc"], "markdown": md,
-            "mindmap": summarizer.extract_mindmap(md)}
+            "mindmap": summarizer.extract_mindmap(md) if mode == "detailed" else None}
 
 
 def api_meta(url: str, page: int | None, cfg) -> dict:

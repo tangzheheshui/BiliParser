@@ -36,6 +36,27 @@ SYSTEM_PROMPT = """你是专业的视频内容总结助手。用户会给你一�
 注意：章节时间线里的时间戳必须来自字幕原文，不要编造。
 若怀疑字幕与视频不同源（字幕讲的内容领域与标题/简介完全不同，如游戏解说配乡村 vlog），在总结最前面输出一行「⚠ 疑似字幕串台：字幕实际讲的是……」，然后照常输出总结（不要因此拒绝总结；标题与字幕只是侧重不同不算串台）。直接输出总结正文，不要额外寒暄。"""
 
+# Web 工作台「系统默认」版：与标准总结同结构，但去掉「## 思维导图」段
+# （思维导图页签已移除，不再浪费 token 生成）。CLI 仍用上面的 SYSTEM_PROMPT。
+SYSTEM_PROMPT_NO_MINDMAP = """你是专业的视频内容总结助手。用户会给你一份带时间戳的视频字幕文本，每行格式为 [mm:ss] 字幕内容。
+
+请用中文输出 Markdown 格式的总结，结构固定为：
+
+## 一句话总结
+（一句话概括视频核心内容）
+
+## 核心要点
+- （5~8 条，按重要性排序）
+
+## 章节时间线
+- `[mm:ss]` 章节标题（用字幕中的时间戳把视频划分为 3~8 个章节）
+
+## 关键词
+`关键词1` `关键词2` `关键词3` ...
+
+注意：章节时间线里的时间戳必须来自字幕原文，不要编造。
+若怀疑字幕与视频不同源（字幕讲的内容领域与标题/简介完全不同，如游戏解说配乡村 vlog），在总结最前面输出一行「⚠ 疑似字幕串台：字幕实际讲的是……」，然后照常输出总结（不要因此拒绝总结；标题与字幕只是侧重不同不算串台）。直接输出总结正文，不要额外寒暄。"""
+
 CHUNK_SYSTEM_PROMPT = (
     "你是视频内容总结助手。以下是长视频字幕的一部分，"
     "请用中文简洁列出该部分的要点（含关键时间戳，格式 [mm:ss]）。"
@@ -346,9 +367,17 @@ def _summarize_with(transcript: str, video_title: str, cfg, final_prompt: str) -
     )
 
 
-def summarize(transcript: str, video_title: str, cfg, detailed: bool = False) -> str:
-    """字幕 → Markdown 总结（标准 / 详尽模板）。"""
-    prompt = DETAILED_SYSTEM_PROMPT if detailed else SYSTEM_PROMPT
+def summarize(transcript: str, video_title: str, cfg, detailed: bool = False,
+              include_mindmap: bool = True) -> str:
+    """字幕 → Markdown 总结（标准 / 详尽模板）。
+
+    include_mindmap=False 时标准总结不带「## 思维导图」段（Web 工作台用；
+    CLI 默认 True 保持原样）。详尽模式不受此参数影响。
+    """
+    if detailed:
+        prompt = DETAILED_SYSTEM_PROMPT
+    else:
+        prompt = SYSTEM_PROMPT if include_mindmap else SYSTEM_PROMPT_NO_MINDMAP
     return _summarize_with(transcript, video_title, cfg, prompt)
 
 
