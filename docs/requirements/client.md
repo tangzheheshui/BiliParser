@@ -1,8 +1,27 @@
-# 需求：Web 工作台
+# 需求：客户端（CLI + Web 工作台 + 桌面版）
 
-> 状态：已实现（2026-08）。本文档记录原始需求、迭代需求、设计决策与边界。
+> 状态：已实现（2026-08）。客户端 = 一个 Python 包 `src/biliparser/` 的三个入口：
+> `biliparse`（CLI）、`biliparse-web`（本机 Web 工作台）、`biliparser-desktop`（桌面壳）。
+> 授权体系另一端的服务器需求见 [server.md](docs/requirements/server.md)；实现原理见
+> [architecture.md](docs/design/architecture.md)。
 
-## 原始需求（v1）
+## 一句话定位
+
+输入一个 B 站视频链接 / BV 号，拉取现成字幕（UP 的 CC 字幕或 B 站官方 AI 字幕），
+交给 GLM 输出结构化总结；拿不到字幕时（未配 SESSDATA 或视频无字幕）降级为
+「元数据 + 热评」推断性总结。**不含语音转写**。
+
+## 入口一：CLI（biliparse）
+
+命令行，自用。参数与示例见 README「用法」，这里只记产品边界：
+
+- 支持链接 / BV 号、多 P `--page`、`--subtitle-only`、`--detailed`、`--mindmap`、`--save`
+- 只配 `glm.api_key` 不配 `sessdata` 也能用（降级模式，出推断性总结）
+- 不支持 b23.tv 短链、av 号、番剧/课程（epid 体系）
+
+## 入口二：Web 工作台（biliparse-web）
+
+### 原始需求（v1）
 
 来自用户（2026-08-18）：
 
@@ -10,7 +29,7 @@
 > 一个是视频链接 和 视频预览区域，然后右侧是文本分析区域（有原始文本 总结文本
 > 等其他显示方式）
 
-## 功能范围
+### 功能范围
 
 三栏工作区布局：
 
@@ -27,19 +46,19 @@
 - 无字幕或无 SESSDATA 时，字幕与总结操作给出带提示的报错，引导用「元数据+热评」降级模式
 - 降级 AI 总结的结果显示在「元数据+热评」页签，并带「推断性结果」警示条
 
-## 设计决策
+### 设计决策
 
 1. **零新依赖**：后端用 Python 标准库 `http.server`（ThreadingHTTPServer），
    前端单文件原生 HTML/CSS/JS，无构建步骤。理由：本项目定位自用小工具，
-   依赖越少越好修（README「已知边界」的同一哲学）。
+   依赖越少越好修。
 2. **复用 CLI 模块**：`web.py` 只做 HTTP 编排，业务全部走既有的
    `bilibili` / `subtitle` / `meta` / `summarizer` / `config` 模块，与 CLI 行为一致。
 3. **内置 Markdown 渲染**：前端带约 40 行的极简渲染器（标题/列表/加粗/行内代码/
    链接/引用），覆盖总结模板用到的语法；不引入 CDN 依赖，离线可用。
 4. **嵌入播放器**：`player.bilibili.com` iframe 预览；iframe 内未登录，清晰度受限，
-  仅作预览用。
+   仅作预览用。
 
-## API 一览
+### API 一览
 
 | 路由 | 说明 |
 |---|---|
@@ -53,7 +72,7 @@
 业务异常（BiliError / ConfigError / SummarizeError）统一转 HTTP 4xx +
 `{error, hint}`；未预期异常转 5xx。
 
-## 迭代需求（v2，同日）
+### 迭代需求（v2，同日）
 
 来自用户：
 
@@ -61,7 +80,7 @@
 > 用户可以自定义一些提示词，然后格式可以保存；然后想支持多个网址的，可以切换，
 > 然后右侧 2 个工作区随之切换
 
-### 自定义模板
+#### 自定义模板
 
 - 左栏「自定义模板」区：新建（名称 + 提示词）/ 编辑 / 删除，点模板名即对当前视频生成
 - 模板持久化在 `~/.biliparser/prompts.json`，跨会话可用
@@ -69,14 +88,14 @@
 - 后端：`summarizer.summarize_custom()`（复用超长视频 map-reduce），
   `POST /api/prompts` 新建/更新、`GET /api/prompts` 列表、`DELETE /api/prompts/<id>` 删除
 
-### 多视频工作区
+#### 多视频工作区
 
 - 中栏顶部视频页签：连续解析多个视频，各自一个工作区，随时切换/关闭
 - 每个工作区独立保存：播放器、视频信息、四个内置页签内容、自定义模板结果、当前激活页签
 - 切换时中栏（预览）与右栏（文本分析）随之整体切换，互不干扰
 - 服务端按 BV 缓存视频信息与字幕（多 P 按 cid），前端切换零额外请求
 
-## 迭代需求（v3，同日）
+### 迭代需求（v3，同日）
 
 来自用户：
 
@@ -89,7 +108,7 @@
 - 保存/编辑/删除模板后下拉同步更新；新建保存后自动选中该模板
 - 模板管理区只保留 ✎ 编辑 / ✕ 删除，不再有单独的运行按钮
 
-## 迭代需求（v4，同日）
+### 迭代需求（v4，同日）
 
 来自用户：
 
@@ -105,7 +124,7 @@
   自动换行的醒目卡片（宽标题 + 高亮当前项）
 - **布局**：配置状态卡固定在左栏底部（不再占据主要滚动区）
 
-## 迭代需求（v5）：字幕完整性
+### 迭代需求（v5）：字幕完整性
 
 用户反馈：「我的视频 20 几分钟，现在就能总结 2 分多钟的」。
 
@@ -125,7 +144,7 @@
 附注：BV1G7gZ6VEEE 的视频内容当天被 UP 替换过（沃尔玛探店 → 核能主题），
 同 BV 不同时间的字幕内容会不同。
 
-### v5b：字幕「串台」检测
+#### v5b：字幕「串台」检测
 
 用户实测同一视频多次总结内容各异（LoL 解说 / 麦当劳复刻 / 韩综——而视频本身
 是西游记解读，发布于当天）。结论：**新发布视频的 AI 字幕有串台期**，CDN 各节点
@@ -141,8 +160,49 @@
 附注：当天早上 BV1G7gZ6VEEE 的「沃尔玛」总结亦是串台产物（视频实为乡村日常），
 已删除误导文件。新发布视频请等 B 站字幕生成稳定后再总结。
 
-## 已知边界 / 后续
+### Web 工作台边界
 
 - 时间戳跳转采用整帧重载播放器，会有一次短暂刷新（跨域限制下的折中）
 - 多视频工作区为会话级状态，刷新页面即清空（后续可考虑 localStorage 持久化）
 - 服务仅监听 127.0.0.1，无鉴权（本机自用，不要暴露到公网）
+
+## 入口三：桌面版 + 激活码（biliparser-desktop）
+
+发行版：一码一机 + 72h 离线宽限；AI 调用经授权服务器代理（服务器持有 GLM key、
+按码每日限流），B 站请求仍走用户本机。整体需求与跨端决策（为什么 AI 走服务器、
+为什么一码一机）见 [server.md](docs/requirements/server.md)，这里只记客户端自己要做的事。
+
+### 客户端侧决策
+
+- **桌面栈 pywebview + PyInstaller**：复用现有 Python 后端 + HTML 界面。
+- **72h 离线宽限**：每次启动必须联网体验太差 → 服务器验证成功下发
+  `valid_until`（+72h），断网宽限期内可正常使用；AI 调用仍必须在线。
+- **指纹用 IOPlatformUUID**：MAC 地址会变，不能用；macOS 用 `ioreg` 读
+  IOPlatformUUID 哈希（重装系统才变）。
+
+### 客户端落地结构
+
+```
+src/biliparser/
+├── licensing.py    指纹/激活/凭证（机器绑定混淆）/验证 + 72h 离线宽限
+├── desktop.py      pywebview 壳（本地服务 + 原生窗口）
+├── static/activate.html   激活页
+├── web.py          /api/license/*、/api/config/* 路由；index.html 激活门 + 设置面板
+└── summarizer.py   cfg.managed_server 有值 → AI 走 /api/ai/chat 代理
+```
+
+打包：`packaging/` 的 `biliparser.spec` + `build-macos.sh` / `build-windows.sh`
+→ `dist/BiliParser.app` / `dist/BiliParser/`（Windows 正式安装包由 CI 打 tag 构建，
+上架见 [deploy.md](docs/operations/deploy.md) 第 10 节）。
+
+### 客户端侧已知边界 / 后续
+
+- Windows 打包走 CI（MachineGuid 指纹）；正式签名/公证未做（用户首次打开需右键→打开）
+- ASR 兜底：`--asr` / `asr.py` 已实现（faster-whisper），模型下载需国内镜像
+  `HF_ENDPOINT=https://hf-mirror.com`；仅串台视频可选，正常视频仍走字幕秒出
+
+## 路线图（可选增强）
+
+- 无字幕视频：音频下载 + faster-whisper 本地转写（代码已有 asr.py，模型下载需镜像）
+- B 站官方 AI 视频总结接口（`view/conclusion/get`）作为补充源
+- 批量处理收藏夹/稍后再看

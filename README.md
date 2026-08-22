@@ -1,8 +1,29 @@
 # BiliParser
 
-B 站视频字幕提取 + AI 总结命令行工具——输入一个视频链接，输出结构化摘要（一句话总结 / 核心要点 / 章节时间线 / 关键词）。
+B 站视频字幕提取 + AI 总结工具——输入一个视频链接，输出结构化摘要
+（一句话总结 / 核心要点 / 章节时间线 / 关键词）。
 
-自用工具：走 B 站 web 接口拉取现成字幕（UP 上传的 CC 字幕或官方 AI 字幕），交给智谱 GLM 总结。**不含语音转写**；拿不到字幕时（未配 SESSDATA 或视频无字幕）自动降级为「元数据 + 热评」的推断性总结。
+自用工具：走 B 站 web 接口拉取现成字幕（UP 上传的 CC 字幕或官方 AI 字幕），
+交给智谱 GLM 总结。**不含语音转写**；拿不到字幕时（未配 SESSDATA 或视频无字幕）
+自动降级为「元数据 + 热评」的推断性总结。
+
+一个 Python 包、三个入口：
+
+| 命令 | 形态 | 说明 |
+|---|---|---|
+| `biliparse` | CLI | 命令行，自用 |
+| `biliparse-web` | Web 工作台 | 本机三栏工作区（:7842） |
+| `biliparser-desktop` | 桌面版 | pywebview 壳；发行模式走激活码 |
+
+## 文档索引
+
+| 文档 | 回答什么 | 什么时候看 |
+|---|---|---|
+| [docs/requirements/client.md](docs/requirements/client.md) | 客户端要做什么（CLI / Web 工作台 / 桌面版 / 激活） | 改客户端需求 |
+| [docs/requirements/server.md](docs/requirements/server.md) | 授权服务器 + 网页版要做什么（含跨端决策） | 改服务器 / 网页版 |
+| [docs/design/architecture.md](docs/design/architecture.md) | 怎么实现的（模块 / 字幕链路 / AI 链路 / 踩坑） | 改实现、排查 |
+| [docs/operations/deploy.md](docs/operations/deploy.md) | 服务器怎么部署上线 | 部署 / 换服务器 |
+| [docs/operations/admin-guide.md](docs/operations/admin-guide.md) | 管理后台怎么用（发码 / 售后） | 卖货 / 运营 |
 
 ## 安装
 
@@ -65,57 +86,43 @@ uv run biliparse BV1xx411c7mD --lang ai_zh
 
 只配 `glm.api_key` 不配 `sessdata` 也能用：此时拿不到字幕，工具会自动拉取公开的标签和热门评论，让 AI 输出**推断性**总结（一句话总结 / 核心要点 / 评论区看点 / 关键词）。配好 `sessdata` 后自动回到完整字幕总结。
 
-## Web 工作台
+## Web 工作台 / 桌面版
 
 ```bash
-uv run biliparse-web            # http://127.0.0.1:7842
+uv run biliparse-web                        # Web 工作台 http://127.0.0.1:7842
+uv run biliparser-desktop                   # 桌面版（直连，自用）
+uv run biliparser-desktop --server https://… # 发行模式（首启激活码）
 ```
 
-三栏工作区：左侧操作按钮与配置状态，中间视频链接与预览，右侧文本分析
-（原始字幕 / 标准总结 / 详尽总结 / 思维导图 / 元数据+热评 五个页签，支持复制与导出 .md；
-思维导图随总结自动生成，节点可折叠，可导出 SVG 图片 / Mermaid / Markdown 大纲）。
-零新依赖（标准库起服务 + 单文件前端），需求与设计见 [docs/web-workspace.md](docs/web-workspace.md)。
-
-## 桌面版与发行模式（激活码）
-
-```bash
-uv sync --group desktop                          # pywebview + pyinstaller
-uv run biliparser-desktop                        # 直连模式（自用）
-uv run biliparser-desktop --server https://…     # 发行模式：首启激活码
-bash packaging/build-macos.sh                    # macOS 打包 dist/BiliParser.app
-bash packaging/build-windows.sh                  # Windows 打包 dist/BiliParser/（装了 Inno Setup 会顺带出 setup.exe）
-```
-
-发行模式：一码一机 + 72h 离线宽限；AI 调用经授权服务器代理（服务器持有
-GLM key、按码每日限流），B 站请求仍走用户本机。授权服务器在
-`license-server/`（Flask + SQLite + 管理后台），需求见
-[docs/licensing.md](docs/licensing.md)，部署见 [docs/deploy.md](docs/deploy.md)。
-
-网页版托管：`license-server/hosted.py` 把 Web 工作台搬到服务器对外发布，
-激活码即账号（与桌面版一码通用、共享每日配额），用户在网页设置里填自己的
-B 站 SESSDATA（按码加密落库）。部署见 [docs/deploy.md](docs/deploy.md) 第 9 节。
+需求见 [docs/requirements/client.md](docs/requirements/client.md)；发行模式与网页版
+托管见 [docs/requirements/server.md](docs/requirements/server.md)；部署见
+[docs/operations/deploy.md](docs/operations/deploy.md)。
 
 ## 开发
 
 ```bash
-uv run pytest          # 离线单元测试
+uv run pytest          # 客户端单元测试（tests/）
 uv run biliparse --help
 ```
+
+授权服务器是独立 venv（本地联调才需要装）：
+
+```bash
+cd license-server && python3 -m venv .venv && .venv/bin/pip install flask httpx pytest && cd ..
+cd license-server && .venv/bin/python -m pytest      # 服务器测试
+```
+
+### 不随仓库走的东西（换机器 / 换环境要补）
+
+| 文件（都在 `~/.biliparser/`） | 作用 | 怎么补 |
+|---|---|---|
+| `config.toml` | SESSDATA + GLM key | 按上文重新填 |
+| `license.json` | 本机激活凭证（绑设备指纹） | 重新激活 |
+| `seen_subs.json` | 跨视频字幕串台指纹库 | 可不补，重新积累 |
+| `models/` | whisper 模型 | 首次运行自动下载 |
 
 ## 常见问题
 
 - **提示「该视频没有可用字幕」**：纯音乐、方言较重或发布不久的视频常没有 AI 字幕，属正常限制（此时总结会自动降级为元数据+热评模式；`--subtitle-only` 仍会报错）。
 - **提示「SESSDATA 未配置或已失效」**：按上文重新复制 SESSDATA（约一个月过期）。
 - **HTTP 412**：请求头不完整会触发风控（本工具已内置完整浏览器请求头规避）；若仍出现说明请求过于频繁，等几分钟再用。
-
-## 已知边界（MVP）
-
-- 不做 ASR 语音转写（无字幕视频的兜底，后续版本考虑 faster-whisper）
-- 不支持 b23.tv 短链、av 号、番剧/课程（epid 体系）
-- 依赖 B 站未公开 web 接口，接口变更可能导致失效（2026 年初第三方库 bilibili-api-python 已因此停更，本项目用裸 HTTP 自实现，链路只有 3 个请求，坏了也好修）
-
-## 路线图（可选增强）
-
-- 无字幕视频：音频下载 + faster-whisper 本地转写
-- B 站官方 AI 视频总结接口（`view/conclusion/get`）作为补充源
-- 批量处理收藏夹/稍后再看

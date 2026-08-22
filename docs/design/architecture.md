@@ -1,8 +1,9 @@
 # 架构与实现原理
 
-> 本文回答「这个程序到底怎么工作的」：整体模块、核心的字幕获取链路、
-> AI 总结链路，以及实测踩过的坑。需求侧见 [web-workspace.md](web-workspace.md)、
-> [licensing.md](licensing.md)；部署见 [deploy.md](deploy.md)。
+> 本文讲的是**客户端核心链路**（`src/biliparser/`：模块结构、字幕获取、AI 总结、
+> 实测踩过的坑）；授权服务器（`license-server/`）的实现原理见
+> [服务器需求](docs/requirements/server.md)。需求侧另见
+> [客户端需求](docs/requirements/client.md)；部署见 [部署指南](docs/operations/deploy.md)。
 
 ## 一句话定位
 
@@ -115,7 +116,8 @@ download_subtitle（逐条下载，按覆盖时长选最完整）
    1% ~ 79% 的不同版本 → best-of-8 轮重试，跨轮保留最佳，覆盖率 ≥80% 收手。
 5. **字幕「串台」**：新发布视频的 CDN 会返回**完全不属于本视频**的字幕
    （实测一个视频拉到过 9 种别人的内容）→ 内容指纹库（`seen_subs.json`）
-   + 首行一致性检测；命中即拒或警告。见 [handoff.md](handoff.md) 背景速读。
+   + 首行一致性检测；命中即拒或警告。LLM 语义校验试过并放弃（教训在
+   `summarizer.py` 注释里）；测试串台样本：`BV1xkgn6hEqe`。
 
 ## 边界与风险
 
