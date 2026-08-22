@@ -52,12 +52,21 @@
 
 ```
 license-server/（独立部署、独立 venv）
-├── app.py           activate/verify/ai/chat/quota + /admin 管理后台
-├── db.py            SQLite：licenses + usage（按天计数）
+├── app.py           activate/verify/ai/chat/quota + trial/register + /admin 管理后台
+├── db.py            SQLite：licenses + usage + trials + trial_usage
 ├── hosted.py        网页版托管（复用 src/biliparser 的字幕/总结模块）
 ├── static-site/     官网下载页
-└── tests/           激活/重绑/吊销/解绑/配额/转发/托管
+└── tests/           激活/重绑/吊销/解绑/配额/转发/托管/试用
 ```
+
+试用机制（2026-08-22 上线，详见 [trial-model.md](trial-model.md)）：
+- `POST /api/trial/register {fingerprint}`：首次登记起算 72h（幂等，`trials.first_seen_at`
+  冲突不覆盖 → 删本地文件/重装无法重置），返回 `{trial, token}`；到期 `trial.active=false`
+  且不发 token。
+- `/api/ai/chat` 与 `/api/quota` 均支持 trial token（payload 前缀 `TRIAL:`），试用走
+  `trial_usage` 独立配额（`TRIAL_DAILY_QUOTA`，默认 10 次/天，后台按设备可调）；
+  到期返回 403「试用已到期，请激活后继续使用」。
+- 常量：`TRIAL_HOURS` / `TRIAL_DAILY_QUOTA`（环境变量可覆盖，上线前按需调）。
 
 ## 管理后台
 
@@ -102,7 +111,8 @@ cd license-server && .venv/bin/python app.py        # :7900
 # 3. 工作台以发行模式启动
 BILIPARSER_LICENSE_SERVER=http://127.0.0.1:7900 uv run biliparse-web
 #    或桌面版：uv run biliparser-desktop --server http://127.0.0.1:7900
-# 4. 浏览器被重定向到激活页 → 输码 → 主界面 → 总结走代理（服务器计量）
+# 4. 首次打开免激活直接进工作台（试用中·剩 72h），总结走代理（服务器计量）
+#    到期后点状态卡「输码激活」→ 输码 → 转正，试用→激活配置/模板不重置
 # 5. 打包：bash packaging/build-macos.sh → dist/BiliParser.app
 ```
 

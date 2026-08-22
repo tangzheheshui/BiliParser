@@ -192,16 +192,22 @@
   `valid_until`（+72h），断网宽限期内可正常使用；AI 调用仍必须在线。
 - **指纹用 IOPlatformUUID**：MAC 地址会变，不能用；macOS 用 `ioreg` 读
   IOPlatformUUID 哈希（重装系统才变）。
+- **试用 3 天（2026-08-22）**：免激活直接进工作台。首次访问
+  `/api/license/state` 自动向服务器登记指纹（`licensing.trial_register` →
+  `POST /api/trial/register`），试用 token 落盘 `~/.biliparser/trial.json`。
+  状态卡显示「试用中·剩 X 小时」+ 今日 AI 配额；到期只锁 AI 生成
+  （总结报错引导「输码激活」，字幕/解析仍可用）。试用→激活无缝衔接，
+  配置/模板/缓存保留不重置。试用凭证价值低，trial.json 明文存储。
 
 ### 客户端落地结构
 
 ```
 src/biliparser/
-├── licensing.py    指纹/激活/凭证（机器绑定混淆）/验证 + 72h 离线宽限
+├── licensing.py    指纹/激活/凭证（机器绑定混淆）/验证 + 72h 离线宽限 + 试用登记
 ├── desktop.py      pywebview 壳（本地服务 + 原生窗口）
 ├── static/activate.html   激活页
-├── web.py          /api/license/*、/api/config/* 路由；index.html 激活门 + 设置面板
-└── summarizer.py   cfg.managed_server 有值 → AI 走 /api/ai/chat 代理
+├── web.py          /api/license/*、/api/config/* 路由；试用登记触发；设置面板
+└── summarizer.py   cfg.managed_server 有值 → AI 走 /api/ai/chat 代理（auth_header 自动选正式/试用 token）
 ```
 
 打包：`packaging/` 的 `biliparser.spec` + `build-macos.sh` / `build-windows.sh`

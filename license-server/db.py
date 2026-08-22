@@ -47,6 +47,21 @@ CREATE TABLE IF NOT EXISTS web_sessions (
     last_seen TEXT,
     PRIMARY KEY (license_id, sid)
 );
+
+CREATE TABLE IF NOT EXISTS trials (
+    fingerprint TEXT PRIMARY KEY,  -- 设备指纹（licensing.fingerprint()）
+    first_seen_at TEXT,            -- 试用起点（服务器 UTC；删本地重装不重置，靠它判定）
+    last_seen_at TEXT,
+    daily_quota INTEGER DEFAULT 10,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS trial_usage (
+    fingerprint TEXT NOT NULL REFERENCES trials(fingerprint),
+    day TEXT NOT NULL,             -- 本地日期 YYYY-MM-DD
+    count INTEGER DEFAULT 0,
+    PRIMARY KEY (fingerprint, day)
+);
 """
 
 

@@ -20,7 +20,7 @@ button{cursor:pointer}
 <body>
 <h1>BiliParser 授权管理后台</h1>
 <p class="muted">共 {{ rows|length }} 个激活码 · 已激活 {{ rows | selectattr('device_fingerprint') | list | length }}
-· 今日 AI 调用 {{ rows | sum(attribute='used_today') }} 次</p>
+· 今日 AI 调用 {{ rows | sum(attribute='used_today') }} 次 · 试用中 {{ trials | selectattr('expired', 'equalto', false) | list | length }} 台</p>
 
 <div class="gen">
   <form method="post" action="/admin/generate">
@@ -85,7 +85,37 @@ button{cursor:pointer}
   </tr>
   {% endfor %}
 </table>
-<p class="muted">解绑是换机通道，也最容易被滥用（解绑→分享给下一人），留意异常解绑次数。
+<p class="muted">解绑是换机通道，也最容易被滥用（解绑→分享给下一人），留意异常解绑次数。</p>
+
+<h2>试用设备（{{ trials|length }}）</h2>
+<table>
+  <tr>
+    <th>设备指纹</th><th>首次连接</th><th>剩余</th><th>今日用量/配额</th><th>最近活跃</th><th>操作</th>
+  </tr>
+  {% for t in trials %}
+  <tr>
+    <td style="font-family:monospace" class="muted" title="{{ t.fingerprint }}">{{ t.fingerprint[:20] }}…</td>
+    <td class="muted">{{ t.first_seen_cn }}</td>
+    <td>{% if t.expired %}<span class="off">已到期</span>{% else %}{{ t.remaining_hours }} 小时{% endif %}</td>
+    <td>{{ t.used_today }}/{{ t.daily_quota }}<br><span class="muted">累计 {{ t.total_used }}</span></td>
+    <td class="muted">{{ t.last_active or '—' }}</td>
+    <td>
+      <form class="inline" method="post" action="/admin/action">
+        <input type="hidden" name="key" value="{{ key }}">
+        <input type="hidden" name="fingerprint" value="{{ t.fingerprint }}">
+        <button name="op" value="del_trial" onclick="return confirm('删除后该设备立刻失去试用资格（重新启动会开始新一次试用）。确定？')">删除</button>
+      </form>
+      <form class="inline" method="post" action="/admin/action">
+        <input type="hidden" name="key" value="{{ key }}">
+        <input type="hidden" name="fingerprint" value="{{ t.fingerprint }}">
+        <input name="daily_quota" value="{{ t.daily_quota }}" size="3">
+        <button name="op" value="trial_quota">配额</button>
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+<p class="muted">试用按设备指纹登记（首次连接起算 72h），服务器端记录，删本地文件/改时钟无法重置。
 管理密钥请勿外泄，生产环境务必走 HTTPS。</p>
 </body>
 </html>

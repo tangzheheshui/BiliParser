@@ -34,6 +34,8 @@ def _utcnow() -> datetime:
 
 TOKEN_TTL_DAYS = 365       # token 自身有效期（真正吊销靠数据库 is_active）
 GRACE_HOURS = 72           # 客户端离线宽限期
+TRIAL_HOURS = int(os.environ.get("TRIAL_HOURS", "72"))          # 试用时长（从首次登记起算）
+TRIAL_DAILY_QUOTA = int(os.environ.get("TRIAL_DAILY_QUOTA", "10"))  # 试用期每日 AI 限额
 
 
 # ---------------- token（HMAC 签名，无状态但可查库吊销） ----------------
@@ -62,6 +64,30 @@ def parse_token(secret: str, token: str) -> tuple[int, str, int] | None:
             return None
         license_id, fingerprint, exp_ts = payload.decode().rsplit(":", 2)
         return int(license_id), fingerprint, int(exp_ts)
+    except (ValueError, TypeError):
+        return None
+
+
+# ---------------- trial token（试用会话，payload 前缀 TRIAL: 区分） ----------------
+
+def issue_trial_token(secret: str, fingerprint: str, exp_ts: int) -> str:
+    payload = f"TRIAL:{fingerprint}:{exp_ts}".encode()
+    sig = hmac.new(secret.encode(), payload, hashlib.sha256).digest()
+    return f"{_b64(payload)}.{_b64(sig)}"
+
+
+def parse_trial_token(secret: str, token: str) -> tuple[str, int] | None:
+    """验签拆包 trial token：(fingerprint, exp_ts)。正式 token 因 rsplit 出 3 段返回 None。"""
+    try:
+        payload_b64, sig_b64 = token.split(".")
+        payload = _unb64(payload_b64)
+        expect = hmac.new(secret.encode(), payload, hashlib.sha256).digest()
+        if not hmac.compare_digest(expect, _unb64(sig_b64)):
+            return None
+        head, fingerprint, exp_ts = payload.decode().rsplit(":", 2)
+        if head != "TRIAL":
+            return None
+        return fingerprint, int(exp_ts)
     except (ValueError, TypeError):
         return None
 
@@ -134,6 +160,44 @@ def create_app(
         exp_ts = int((_utcnow() + timedelta(days=TOKEN_TTL_DAYS)).timestamp())
         return issue_token(app.config["SERVER_SECRET"], row["id"], row["device_fingerprint"], exp_ts)
 
+    def _trial_state_row(row) -> dict:
+        """试用记录 → 状态 dict（active 按 first_seen_at + TRIAL_HOURS 判定）。"""
+        first = datetime.fromisoformat(row["first_seen_at"])
+        ends = first + timedelta(hours=TRIAL_HOURS)
+        now = _utcnow()
+        active = now < ends
+        return {
+            "active": active,
+            "expires_at": ends.isoformat(),
+            "remaining_seconds": max(0, int((ends - now).total_seconds())) if active else 0,
+            "daily_quota": row["daily_quota"],
+        }
+
+    def _check_trial(token: str) -> tuple[sqlite3.Row | None, str]:
+        """trial token 验签 + 数据库实时状态。返回 (trials 行, 错误消息)。"""
+        if not token:
+            return None, "缺少凭证"
+        parsed = parse_trial_token(app.config["SERVER_SECRET"], token)
+        if not parsed:
+            return None, "凭证无效"
+        fingerprint, exp_ts = parsed
+        if exp_ts < int(_utcnow().timestamp()):
+            return None, "凭证已过期，请重新激活"
+        row = db().execute("SELECT * FROM trials WHERE fingerprint=?", (fingerprint,)).fetchone()
+        if row is None:
+            return None, "试用登记不存在，请重新登记"
+        if not _trial_state_row(row)["active"]:
+            return None, "试用已到期，请激活后继续使用"
+        return row, ""
+
+    def _trial_usage(row) -> dict:
+        today = datetime.now().strftime("%Y-%m-%d")
+        u = db().execute(
+            "SELECT count FROM trial_usage WHERE fingerprint=? AND day=?",
+            (row["fingerprint"], today),
+        ).fetchone()
+        return {"today_used": (u["count"] if u else 0), "daily_quota": row["daily_quota"]}
+
     def _usage(row) -> dict:
         today = datetime.now().strftime("%Y-%m-%d")
         u = db().execute(
@@ -175,6 +239,34 @@ def create_app(
             "usage": {"today_used": 0, "daily_quota": row["daily_quota"]},
         })
 
+    @app.post("/api/trial/register")
+    def trial_register():
+        """试用登记：设备指纹首次出现即开始计时（服务器 UTC + TRIAL_HOURS）。
+
+        幂等关键：first_seen_at 冲突时不覆盖——删本地文件/重装返回同一
+        `first_seen_at`，试用期不重置。到期仍返回状态（active=false），
+        不发 token，客户端据此引导激活。
+        """
+        data = request.get_json(silent=True) or {}
+        fingerprint = str(data.get("fingerprint") or "").strip()
+        if not fingerprint:
+            return err("fingerprint 必填", 400)
+        now = _utcnow().isoformat()
+        db().execute(
+            "INSERT INTO trials (fingerprint, first_seen_at, last_seen_at) VALUES (?,?,?) "
+            "ON CONFLICT(fingerprint) DO UPDATE SET last_seen_at=excluded.last_seen_at",
+            (fingerprint, now, now),
+        )
+        db().commit()
+        row = db().execute("SELECT * FROM trials WHERE fingerprint=?", (fingerprint,)).fetchone()
+        trial = _trial_state_row(row)
+        trial.update(_trial_usage(row))
+        resp = {"trial": trial}
+        if trial["active"]:
+            exp_ts = int((_utcnow() + timedelta(hours=TRIAL_HOURS)).timestamp())
+            resp["token"] = issue_trial_token(app.config["SERVER_SECRET"], fingerprint, exp_ts)
+        return jsonify(resp)
+
     @app.post("/api/web/login")
     def web_login():
         """网页版登录：验码发 WEB 指纹 token。不绑定/不校验设备指纹——
@@ -215,20 +307,30 @@ def create_app(
     def quota():
         row, reason = _check_token(_bearer())
         if not row:
-            return err(reason, 403)
+            trow, treason = _check_trial(_bearer())
+            if not trow:
+                return err(treason, 403)
+            return jsonify(_trial_usage(trow))
         return jsonify(_usage(row))
 
     @app.post("/api/ai/chat")
     def ai_chat():
-        row, reason = _check_token(_bearer())
-        if not row:
-            return err(reason, 403)
         body = request.get_json(silent=True) or {}
         messages = body.get("messages")
         if not isinstance(messages, list) or not messages:
             return err("请求体需要 messages 数组", 400)
 
-        usage_now = _usage(row)
+        # 身份：正式 token 优先，其次是试用 token；都无效拒绝。
+        # 试用身份走 trial_usage 配额，正式走 usage 配额。
+        row, reason = _check_token(_bearer())
+        trial = None
+        if not row:
+            trow, treason = _check_trial(_bearer())
+            if not trow:
+                return err(treason, 403)
+            trial = trow
+
+        usage_now = _trial_usage(trial) if trial else _usage(row)
         if usage_now["today_used"] >= usage_now["daily_quota"]:
             return err(
                 f"今日 AI 调用已达上限（{usage_now['daily_quota']} 次/天）",
@@ -257,11 +359,19 @@ def create_app(
             time.sleep(1.5)
 
         if resp.status_code == 200:  # 成功才计费
-            db().execute(
-                "INSERT INTO usage (license_id, day, count) VALUES (?,?,1) "
-                "ON CONFLICT(license_id, day) DO UPDATE SET count=count+1",
-                (row["id"], datetime.now().strftime("%Y-%m-%d")),
-            )
+            today = datetime.now().strftime("%Y-%m-%d")
+            if trial:
+                db().execute(
+                    "INSERT INTO trial_usage (fingerprint, day, count) VALUES (?,?,1) "
+                    "ON CONFLICT(fingerprint, day) DO UPDATE SET count=count+1",
+                    (trial["fingerprint"], today),
+                )
+            else:
+                db().execute(
+                    "INSERT INTO usage (license_id, day, count) VALUES (?,?,1) "
+                    "ON CONFLICT(license_id, day) DO UPDATE SET count=count+1",
+                    (row["id"], today),
+                )
             db().commit()
         return app.response_class(resp.text, status=resp.status_code,
                                   mimetype="application/json")
@@ -302,7 +412,8 @@ def create_app(
     def admin_page():
         if not _admin_ok():
             return err("管理密钥错误", 403)
-        return render_template("admin.html", rows=_all_rows(db()), key=app.config["ADMIN_KEY"])
+        return render_template("admin.html", rows=_all_rows(db()),
+                               trials=_all_trials(db()), key=app.config["ADMIN_KEY"])
 
     @app.get("/admin/export")
     def admin_export():
@@ -337,7 +448,8 @@ def create_app(
             )
             codes.append(code)
         db().commit()
-        return render_template("admin.html", rows=_all_rows(db()), key=app.config["ADMIN_KEY"],
+        return render_template("admin.html", rows=_all_rows(db()),
+                               trials=_all_trials(db()), key=app.config["ADMIN_KEY"],
                                generated=codes)
 
     @app.post("/admin/action")
@@ -346,9 +458,11 @@ def create_app(
         if not _admin_ok():
             return err("管理密钥错误", 403)
         op = request.form.get("op")
-        lid = request.form.get("id")
-        if not lid.isdigit():
-            return err("参数错误", 400)
+        lid = request.form.get("id") or ""
+        if op in ("toggle", "unbind", "quota"):
+            if not lid.isdigit():
+                return err("参数错误", 400)
+            lid = int(lid)
         if op == "toggle":
             db().execute("UPDATE licenses SET is_active = 1 - is_active WHERE id=?", (lid,))
         elif op == "unbind":
@@ -360,6 +474,18 @@ def create_app(
             q = request.form.get("daily_quota", "")
             if q.isdigit() and int(q) >= 0:
                 db().execute("UPDATE licenses SET daily_quota=? WHERE id=?", (int(q), lid))
+        elif op == "del_trial":
+            # 删试用记录即封该设备：下次连接重新开始一次试用（防删本地文件刷）
+            fp = request.form.get("fingerprint", "")
+            if not fp:
+                return err("参数错误", 400)
+            db().execute("DELETE FROM trial_usage WHERE fingerprint=?", (fp,))
+            db().execute("DELETE FROM trials WHERE fingerprint=?", (fp,))
+        elif op == "trial_quota":
+            fp = request.form.get("fingerprint", "")
+            q = request.form.get("daily_quota", "")
+            if fp and q.isdigit() and int(q) >= 0:
+                db().execute("UPDATE trials SET daily_quota=? WHERE fingerprint=?", (int(q), fp))
         else:
             return err("未知操作", 400)
         db().commit()
@@ -378,6 +504,28 @@ def create_app(
             "LEFT JOIN usage u ON u.license_id=l.id AND u.day=date('now','localtime') "
             "ORDER BY l.id DESC"
         ).fetchall()
+
+    def _all_trials(dbconn):
+        """试用设备列表：指纹 / 首次连接 / 剩余 / 今日用量与配额 / 是否已到期。"""
+        rows = dbconn.execute(
+            "SELECT t.*, "
+            "datetime(t.first_seen_at,'+8 hours') AS first_seen_cn, "
+            "COALESCE((SELECT SUM(x.count) FROM trial_usage x WHERE x.fingerprint=t.fingerprint),0) AS total_used, "
+            "(SELECT MAX(x.day) FROM trial_usage x WHERE x.fingerprint=t.fingerprint) AS last_active, "
+            "COALESCE((SELECT u.count FROM trial_usage u WHERE u.fingerprint=t.fingerprint "
+            "          AND u.day=date('now','localtime')),0) AS used_today "
+            "FROM trials t ORDER BY t.first_seen_at DESC"
+        ).fetchall()
+        now = _utcnow()
+        out = []
+        for r in rows:
+            ends = datetime.fromisoformat(r["first_seen_at"]) + timedelta(hours=TRIAL_HOURS)
+            item = dict(r)  # sqlite3.Row 只读，模板要新增字段先转 dict
+            item["ends_at"] = ends.isoformat()
+            item["remaining_hours"] = max(0, int((ends - now).total_seconds() / 3600))
+            item["expired"] = now >= ends
+            out.append(item)
+        return out
 
     return app
 

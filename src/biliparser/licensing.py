@@ -15,6 +15,7 @@ from pathlib import Path
 import httpx
 
 LICENSE_PATH = Path.home() / ".biliparser" / "license.json"
+TRIAL_PATH = Path.home() / ".biliparser" / "trial.json"
 GRACE_SECONDS = 72 * 3600  # 服务器下发的 valid_until 之后再宽限这么久
 
 
@@ -105,6 +106,60 @@ def clear_credential() -> None:
     LICENSE_PATH.unlink(missing_ok=True)
 
 
+# ---------------- 试用登记与凭证 ----------------
+
+def trial_register(server_url: str, fp: str | None = None) -> dict:
+    """试用登记：向服务器登记设备指纹并领试用 token，成功后落盘 trial.json。
+
+    服务器按指纹记住首次连接时间（72h 起算），幂等——删本地文件重装后
+    重复登记返回同一试用起点，试不重置。到期时不发 token（返回
+    trial.active=False），客户端据此引导激活。网络不通抛 LicensingError。
+    """
+    fp = fp or fingerprint()
+    try:
+        resp = httpx.post(
+            server_url.rstrip("/") + "/api/trial/register",
+            json={"fingerprint": fp}, timeout=15,
+        )
+    except httpx.HTTPError as e:
+        raise LicensingError(
+            f"连不上授权服务器（{e.__class__.__name__}）", hint="检查网络后重试"
+        ) from e
+    data = resp.json() if resp.content else {}
+    if resp.status_code != 200:
+        raise LicensingError(
+            data.get("error", f"试用登记失败（HTTP {resp.status_code}）"),
+            hint=data.get("hint"),
+        )
+    trial = data.get("trial", {})
+    token = data.get("token")
+    if token:
+        TRIAL_PATH.parent.mkdir(parents=True, exist_ok=True)
+        TRIAL_PATH.write_text(
+            json.dumps({"v": 1, "server_url": server_url.rstrip("/"),
+                        "token": token, "fingerprint": fp,
+                        "expires_at": trial.get("expires_at", "")}),
+            encoding="utf-8",
+        )
+    return trial
+
+
+def load_trial(fp: str | None = None) -> dict | None:
+    """读本地试用凭证；文件缺失/损坏返回 None。"""
+    if not TRIAL_PATH.exists():
+        return None
+    try:
+        return json.loads(TRIAL_PATH.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return None
+
+
+def trial_state(server_url: str, fp: str | None = None) -> dict:
+    """获取试用状态（首次自动登记落盘 token）。每次向服务器确认，返回最新
+    remaining / 配额 / 今日用量；到期返回 {active: False}。"""
+    return trial_register(server_url, fp)
+
+
 # ---------------- 激活与验证 ----------------
 
 def activate(server_url: str, code: str, fp: str | None = None) -> dict:
@@ -166,8 +221,12 @@ def verify(server_url: str | None = None, fp: str | None = None,
 
 
 def auth_header(fp: str | None = None) -> dict:
-    """AI 代理请求头；无凭证时报 LicensingError。"""
+    """AI 代理请求头：正式凭证优先，其次试用 token；都没有时报 LicensingError。"""
+    fp = fp or fingerprint()
     cred = load_credential(fp)
-    if not cred:
-        raise LicensingError("未激活，无法使用 AI 服务", hint="请先在激活页输入激活码")
-    return {"Authorization": f"Bearer {cred['token']}"}
+    if cred:
+        return {"Authorization": f"Bearer {cred['token']}"}
+    trial = load_trial(fp)
+    if trial and trial.get("token"):
+        return {"Authorization": f"Bearer {trial['token']}"}
+    raise LicensingError("未激活，无法使用 AI 服务", hint="请先在激活页输入激活码")

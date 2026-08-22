@@ -273,19 +273,32 @@ def api_meta(url: str, page: int | None, cfg) -> dict:
 # ---------------- 授权 / 配置（发行版模式） ----------------
 
 def api_license_state(cfg) -> dict:
-    """激活门与状态卡数据。server 为空 = 直连模式，前端不设门。"""
+    """状态卡数据。server 为空 = 直连模式，前端不设门。
+
+    managed 模式：有正式凭证 → 在线验证（含 72h 离线宽限）；无凭证 →
+    走试用（首次自动登记），到期 active=False 由前端引导激活。试用登记
+    失败（断网等）不阻断——字幕解析等本地功能仍可用。
+    """
     state = {
         "server": cfg.managed_server,
         "activated": False,
         "online": False,
         "reason": "",
         "usage": None,
+        "trial": None,
         "fingerprint": licensing.fingerprint()[:16] + "…",
     }
-    if cfg.managed_server and licensing.load_credential():
+    if not cfg.managed_server:
+        return state
+    if licensing.load_credential():
         v = licensing.verify(cfg.managed_server)
         state.update(activated=v["ok"], online=v.get("online", False),
                      reason=v.get("reason", ""), usage=v.get("usage"))
+    else:
+        try:
+            state["trial"] = licensing.trial_state(cfg.managed_server)
+        except licensing.LicensingError as e:
+            state["reason"] = f"试用登记失败：{e}"
     return state
 
 

@@ -57,6 +57,10 @@ body{background:var(--bg);color:var(--text);font:14px/1.6 -apple-system,"PingFan
 .badge{padding:1px 8px;border-radius:10px;font-size:11px}
 .badge.ok{background:rgba(77,216,138,.15);color:var(--ok)}
 .badge.no{background:rgba(255,107,107,.15);color:var(--err)}
+.status-card a.act{display:block;text-align:center;margin-top:6px;padding:6px;border:1px solid var(--accent);
+  border-radius:6px;color:var(--accent2);text-decoration:none;font-size:12px}
+.status-card a.act:hover{background:rgba(77,163,255,.12)}
+.status-card.need-act{box-shadow:0 0 0 2px var(--err);border-color:var(--err)}
 
 /* 模板列表 */
 .gensel{width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--text);
@@ -461,7 +465,7 @@ $('#gen-type').onchange=()=>{
 };
 $('#b-gen').onclick=guard(async()=>{
   const v=$('#gen-type').value, w=ws(), page=w.video.page;
-  const done=[], fail=[];
+  const done=[], fail=[]; let needAct=false;
   // 1/3 字幕
   setState('生成中… 1/3 拉取字幕','busy');
   try{
@@ -480,7 +484,11 @@ $('#b-gen').onclick=guard(async()=>{
     }
     w.tabs.summary=d.markdown; w.fallback=d.fallback||null;
     done.push('总结');
-  }catch(e){ fail.push('总结'); }
+  }catch(e){
+    fail.push('总结');
+    // 试用到期 / 未授权：服务器在 /api/ai/chat 返回 403，提示去激活
+    if(/试用|激活/.test(String(e.message||e))) needAct=true;
+  }
   // 3/3 评论（元数据+热评推断）
   setState('生成中… 3/3 评论','busy');
   try{
@@ -492,6 +500,11 @@ $('#b-gen').onclick=guard(async()=>{
   showTab(w.tabs.summary?'summary':(w.tabs.subtitle?'subtitle':'meta'));
   if(fail.length) setState(`完成 ${done.join('、')||'无'}；失败 ${fail.join('、')}`,'err');
   else setState(`✓ 已生成：${done.join(' / ')}`);
+  if(needAct){
+    const sc=$('#status'); sc.classList.add('need-act');
+    toast('AI 总结需要激活：试用已到期或未授权，请点左下角「输码激活」');
+    setTimeout(()=>sc.classList.remove('need-act'),4000);
+  }
 });
 
 /* ---------- 自定义模板 ---------- */
@@ -613,11 +626,25 @@ async function loadStatus(){
       <div class="row"><span>授权</span><span class="badge ok">已激活</span></div>
       <div class="row"><span>AI</span><span class="badge ok">${d.provider||'服务器免费模型'}</span></div>`;
     }else if(lic.server){
-      // 桌面版发行模式：服务器代理 + 每日配额
-      const u=lic.usage;
+      // 桌面版发行模式：服务器代理 + 每日配额；未激活 → 试用（服务器记录首次时间）
+      const tr=lic.trial;
+      const u=lic.usage||(tr?{today_used:tr.today_used,daily_quota:tr.daily_quota}:null);
+      let auth,act='';
+      if(lic.activated){ auth=`<span class="badge ok">${lic.online?'已激活':'离线宽限'}</span>`; }
+      else if(tr&&tr.active){
+        const h=Math.max(1,Math.ceil(tr.remaining_seconds/3600));
+        auth=`<span class="badge ok">试用中 · 剩 ${h} 小时</span>`;
+        act=`<a class="act" href="/activate.html">输码激活 / 购买</a>`;
+      }
+      else if(tr){
+        auth=`<span class="badge no">试用已到期</span>`;
+        act=`<a class="act" href="/activate.html" style="color:var(--err);border-color:var(--err)">试用到期 · 输入激活码解锁 AI</a>`;
+      }
+      else{ auth=`<span class="badge no">未激活</span>`; act=`<a class="act" href="/activate.html">输码激活</a>`; }
       head=`
-      <div class="row"><span>授权</span><span class="badge ${lic.activated?'ok':'no'}">${lic.activated?(lic.online?'已激活':'离线宽限'):'未激活'}</span></div>
-      ${u?`<div class="row"><span>今日 AI</span><b>${u.today_used}/${u.daily_quota}</b></div>`:''}`;
+      <div class="row"><span>授权</span>${auth}</div>
+      ${u?`<div class="row"><span>今日 AI</span><b>${u.today_used}/${u.daily_quota}</b></div>`:''}
+      ${act}`;
     }
     $('#status').innerHTML=`
       ${head}

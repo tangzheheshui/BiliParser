@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from app import create_app, issue_token, parse_token
+from app import create_app, issue_token, parse_token, parse_trial_token
 
 
 @pytest.fixture()
@@ -234,6 +234,128 @@ def test_admin_export_only_unactivated(client):
     codes = r.get_data(as_text=True).strip().split("\n")
     assert len(codes) == 2 and all(c.startswith("BP-") for c in codes)
     assert client.get("/admin/export").status_code == 403  # 无 key 拒绝
+
+
+# ---------- 试用登记 ----------
+
+def _trial_register(client, fp="MAC-T1"):
+    return client.post("/api/trial/register", json={"fingerprint": fp})
+
+
+def test_trial_register_active_and_idempotent(client):
+    r = _trial_register(client)
+    assert r.status_code == 200
+    d = r.get_json()
+    assert d["trial"]["active"] and d["trial"]["remaining_seconds"] > 0
+    assert d["token"] and parse_trial_token("test-secret", d["token"])[0] == "MAC-T1"
+    # 幂等：二次登记同一起点（first_seen_at 不覆盖），剩余时间不重置
+    import sqlite3
+    conn = sqlite3.connect("test.db")
+    first = conn.execute("SELECT first_seen_at FROM trials WHERE fingerprint='MAC-T1'").fetchone()[0]
+    conn.close()
+    r2 = _trial_register(client).get_json()
+    conn = sqlite3.connect("test.db")
+    first2 = conn.execute("SELECT first_seen_at FROM trials WHERE fingerprint='MAC-T1'").fetchone()[0]
+    conn.close()
+    assert first == first2
+    assert r2["trial"]["active"]
+
+
+def test_trial_register_no_fingerprint(client):
+    assert client.post("/api/trial/register", json={}).status_code == 400
+
+
+def test_trial_expired_no_token(client):
+    _trial_register(client)
+    import sqlite3
+    conn = sqlite3.connect("test.db")
+    conn.execute("UPDATE trials SET first_seen_at='2000-01-01T00:00:00'")
+    conn.commit()
+    conn.close()
+    r = _trial_register(client)
+    assert r.status_code == 200
+    d = r.get_json()
+    assert not d["trial"]["active"]
+    assert "token" not in d  # 到期不发 token，客户端据此引导激活
+
+
+# ---------- 试用 AI 代理 ----------
+
+def _trial_token(client, fp="MAC-T1") -> str:
+    return _trial_register(client, fp).get_json()["token"]
+
+
+def test_trial_ai_chat_forwards_and_counts(client, monkeypatch):
+    import app as app_mod
+    captured = {}
+
+    class _Resp:
+        status_code = 200
+        text = json.dumps({"choices": [{"message": {"content": "ok"}}]})
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        captured.update(url=url, json=json, headers=headers)
+        return _Resp()
+
+    monkeypatch.setattr(app_mod.httpx, "post", fake_post)
+    token = _trial_token(client)
+    r = client.post("/api/ai/chat", json={"messages": [{"role": "user", "content": "hi"}]},
+                    headers=_auth(client, token))
+    assert r.status_code == 200
+    # 试用配额单独计（trial_usage），与正式 usage 隔离
+    q = client.post("/api/trial/register", json={"fingerprint": "MAC-T1"}).get_json()
+    assert q["trial"]["today_used"] == 1
+
+
+def test_trial_ai_chat_quota_exceeded(client):
+    import sqlite3
+    import datetime
+    _trial_register(client)
+    conn = sqlite3.connect("test.db")
+    today = datetime.datetime.now().strftime("%Y-%m-%d")
+    conn.execute(
+        "INSERT INTO trial_usage (fingerprint, day, count) "
+        "SELECT fingerprint, ?, daily_quota FROM trials", (today,)
+    )
+    conn.commit()
+    conn.close()
+    token = _trial_token(client)
+    r = client.post("/api/ai/chat", json={"messages": [{"role": "user", "content": "hi"}]},
+                    headers=_auth(client, token))
+    assert r.status_code == 429 and "上限" in r.get_json()["error"]
+
+
+def test_trial_ai_chat_expired(client):
+    token = _trial_token(client)  # 到期前先拿 token，回填后测到期拦截
+    import sqlite3
+    conn = sqlite3.connect("test.db")
+    conn.execute("UPDATE trials SET first_seen_at='2000-01-01T00:00:00'")
+    conn.commit()
+    conn.close()
+    r = client.post("/api/ai/chat", json={"messages": [{"role": "user", "content": "hi"}]},
+                    headers=_auth(client, token))
+    assert r.status_code == 403 and "试用已到期" in r.get_json()["error"]
+
+
+def test_trial_token_rejected_by_license_verify(client):
+    # 试用 token 不能冒充正式凭证（verify/正式 AI 通道不认）
+    token = _trial_token(client)
+    d = client.post("/api/verify", json={"token": token}).get_json()
+    assert not d["valid"]
+
+
+def test_admin_del_trial_blocks_device(client):
+    _trial_register(client)
+    client.post("/admin/action", data={"key": "admin-key",
+                                       "op": "del_trial", "fingerprint": "MAC-T1"})
+    import sqlite3
+    conn = sqlite3.connect("test.db")
+    assert conn.execute("SELECT COUNT(*) FROM trials").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM trial_usage").fetchone()[0] == 0
+    conn.close()
+    # 重新登记 = 新试用（后台删除即封设备，下次连接重新开始）
+    d = _trial_register(client).get_json()
+    assert d["trial"]["active"]
 
 
 # ---------- 官网与安装包分发 ----------

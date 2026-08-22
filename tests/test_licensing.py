@@ -12,6 +12,7 @@ from biliparser import licensing
 @pytest.fixture(autouse=True)
 def _isolate(monkeypatch, tmp_path):
     monkeypatch.setattr(licensing, "LICENSE_PATH", tmp_path / "license.json")
+    monkeypatch.setattr(licensing, "TRIAL_PATH", tmp_path / "trial.json")
 
 
 def test_fingerprint_stable_and_prefixed():
@@ -125,3 +126,69 @@ def test_auth_header_requires_credential():
         licensing.auth_header(fp="FP-x")
     licensing._save("http://s", "T9", "2099-01-01T00:00:00", "FP-1")
     assert licensing.auth_header(fp="FP-1") == {"Authorization": "Bearer T9"}
+
+
+# ---------- 试用登记与凭证 ----------
+
+def test_trial_register_saves_token(monkeypatch):
+    trial = {"active": True, "expires_at": "2026-08-25T00:00:00",
+             "remaining_seconds": 12345, "daily_quota": 10, "today_used": 0}
+    monkeypatch.setattr(licensing.httpx, "post",
+                        lambda *a, **k: _Resp(200, {"trial": trial, "token": "TR-1"}))
+    d = licensing.trial_register("http://s/", fp="FP-1")
+    assert d == trial
+    saved = json.loads(licensing.TRIAL_PATH.read_text(encoding="utf-8"))
+    assert saved["token"] == "TR-1" and saved["server_url"] == "http://s"
+    # load_trial 读回
+    assert licensing.load_trial("FP-1")["token"] == "TR-1"
+
+
+def test_trial_register_server_error(monkeypatch):
+    monkeypatch.setattr(licensing.httpx, "post",
+                        lambda *a, **k: _Resp(403, {"error": "试用登记失败", "hint": "x"}))
+    with pytest.raises(licensing.LicensingError) as ei:
+        licensing.trial_register("http://s", fp="FP-1")
+    assert "试用登记失败" in str(ei.value)
+
+
+def test_trial_register_network_error(monkeypatch):
+    def boom(*a, **k):
+        raise licensing.httpx.ConnectError("no net")
+    monkeypatch.setattr(licensing.httpx, "post", boom)
+    with pytest.raises(licensing.LicensingError):
+        licensing.trial_register("http://s", fp="FP-1")
+
+
+def test_trial_register_expired_no_save(monkeypatch):
+    # 到期时服务器不发 token → 不写 trial.json
+    trial = {"active": False, "remaining_seconds": 0}
+    monkeypatch.setattr(licensing.httpx, "post",
+                        lambda *a, **k: _Resp(200, {"trial": trial}))
+    d = licensing.trial_register("http://s", fp="FP-1")
+    assert not d["active"] and not licensing.TRIAL_PATH.exists()
+
+
+def test_load_trial_missing_or_corrupt():
+    assert licensing.load_trial("FP-1") is None
+    licensing.TRIAL_PATH.write_text("not json{{{", encoding="utf-8")
+    assert licensing.load_trial("FP-1") is None
+
+
+def test_trial_state_registers(monkeypatch):
+    trial = {"active": True, "remaining_seconds": 1000, "daily_quota": 10, "today_used": 0}
+    monkeypatch.setattr(licensing.httpx, "post",
+                        lambda *a, **k: _Resp(200, {"trial": trial, "token": "TR-2"}))
+    assert licensing.trial_state("http://s", fp="FP-1") == trial
+
+
+def test_auth_header_falls_back_to_trial():
+    # 无正式凭证但有试用 token → 用试用身份调 AI 代理
+    licensing.TRIAL_PATH.write_text(json.dumps({"token": "TR-9"}), encoding="utf-8")
+    assert licensing.auth_header(fp="FP-1") == {"Authorization": "Bearer TR-9"}
+    # 正式凭证优先于试用
+    licensing._save("http://s", "T9", "2099-01-01T00:00:00", "FP-1")
+    assert licensing.auth_header(fp="FP-1") == {"Authorization": "Bearer T9"}
+    # 都没有 → 报错
+    licensing.LICENSE_PATH.unlink(); licensing.TRIAL_PATH.unlink()
+    with pytest.raises(licensing.LicensingError):
+        licensing.auth_header(fp="FP-1")
