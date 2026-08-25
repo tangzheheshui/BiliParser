@@ -20,7 +20,7 @@ B 站视频字幕提取 + AI 总结工具——输入一个视频链接，输出
 | 文档 | 回答什么 | 什么时候看 |
 |---|---|---|
 | [docs/requirements/client.md](docs/requirements/client.md) | 客户端要做什么（CLI / Web 工作台 / 桌面版 / 激活） | 改客户端需求 |
-| [docs/requirements/server.md](docs/requirements/server.md) | 授权服务器 + 网页版要做什么（含跨端决策） | 改服务器 / 网页版 |
+| [docs/requirements/server.md](docs/requirements/server.md) | 授权服务器要做什么（激活码库存池 + 一次性激活） | 改服务器 |
 | [docs/design/architecture.md](docs/design/architecture.md) | 怎么实现的（模块 / 字幕链路 / AI 链路 / 踩坑） | 改实现、排查 |
 | [docs/operations/deploy.md](docs/operations/deploy.md) | 服务器怎么部署上线 | 部署 / 换服务器 |
 | [docs/operations/admin-guide.md](docs/operations/admin-guide.md) | 管理后台怎么用（发码 / 售后） | 卖货 / 运营 |
@@ -90,12 +90,14 @@ uv run biliparse BV1xx411c7mD --lang ai_zh
 
 ```bash
 uv run biliparse-web                        # Web 工作台 http://127.0.0.1:7842
-uv run biliparser-desktop                   # 桌面版（直连，自用）
-uv run biliparser-desktop --server https://… # 发行模式（首启激活码）
+uv run biliparser-desktop                   # 桌面版（自用，不弹激活）
+BILIPARSER_LICENSE_SERVER=http://… uv run biliparse-web   # 发行模式（首启输码激活）
 ```
 
-需求见 [docs/requirements/client.md](docs/requirements/client.md)；发行模式与网页版
-托管见 [docs/requirements/server.md](docs/requirements/server.md)；部署见
+发行模式：首次启动输一次激活码（联网绑定本机），之后永久离线可用；
+AI 用你自己配的 key（智谱 / DeepSeek），服务器不经手。需求见
+[docs/requirements/client.md](docs/requirements/client.md) 与
+[docs/requirements/服务器需求文档.md](docs/requirements/服务器需求文档.md)；部署见
 [docs/operations/deploy.md](docs/operations/deploy.md)。
 
 ## 开发
@@ -108,16 +110,16 @@ uv run biliparse --help
 授权服务器是独立 venv（本地联调才需要装）：
 
 ```bash
-cd license-server && python3 -m venv .venv && .venv/bin/pip install flask httpx pytest && cd ..
-cd license-server && .venv/bin/python -m pytest      # 服务器测试
+cd license-server && python3 -m venv .venv && .venv/bin/pip install flask pytest && cd ..
+cd license-server && .venv/bin/python -m pytest      # 服务器测试（22 用例）
 ```
 
 ### 不随仓库走的东西（换机器 / 换环境要补）
 
 | 文件（都在 `~/.biliparser/`） | 作用 | 怎么补 |
 |---|---|---|
-| `config.toml` | SESSDATA + GLM key | 按上文重新填 |
-| `license.json` | 本机激活凭证（绑设备指纹） | 重新激活 |
+| `config.toml` | SESSDATA + AI key | 按上文重新填 |
+| `license.json` | 本机激活凭证（机器绑定混淆） | 重新输码激活 |
 | `seen_subs.json` | 跨视频字幕串台指纹库 | 可不补，重新积累 |
 | `models/` | whisper 模型 | 首次运行自动下载 |
 

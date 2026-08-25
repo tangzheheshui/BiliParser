@@ -304,16 +304,18 @@ def fetch_full_subtitle(
        下载，跨轮保留最佳，直到覆盖率 ≥ min_coverage 或打满 rounds 轮。
     4. 新发布视频的 AI 字幕有「串台期」：CDN 会返回完全不属于本视频的
        字幕文件（实例 BV1HZgV6TEGm，标题是西游记解读，拉到的字幕分别
-       是 LoL 比赛解说和麦当劳复刻）。同一视频的合法版本首行应一致
-       （渐进生成只增不改），因此用「各次下载的首行指纹」做一致性检测，
-       不一致时 consistent=False，由调用方警告用户。
+       是 LoL 比赛解说和麦当劳复刻）。检测信号是「同一条字幕轨（同 id/
+       lan）多轮下载的首行不一致」；跨轨（如 UP 的 CC 与 AI 字幕）内容
+       本就不同，不参与比对——否则多轨视频必误报。不一致时
+       consistent=False，由调用方警告用户。
 
     返回 (sub, lines, coverage, consistent)；
     视频无字幕（或指定 lang 无匹配）返回 (None, [], 0, True)；
     duration 未知时按行数比较、coverage 记 1.0。
     """
     best_sub, best_lines, best_cov = None, [], 0.0
-    fingerprints: set[str] = set()
+    first_by_track: dict[str, str] = {}   # 字幕轨（id/lan）→ 首行
+    consistent = True
     seen = _load_seen()
     for _ in range(rounds):
         subs = get_subtitle_info(client, bvid, cid).get("subtitles") or []
@@ -330,7 +332,12 @@ def fetch_full_subtitle(
                 continue
             first = next((str(l.get("content", "")).strip() for l in lines if str(l.get("content", "")).strip()), "")
             if first:
-                fingerprints.add(first)
+                key = str(sub.get("id") or sub.get("lan") or "")
+                prev = first_by_track.get(key)
+                if prev is None:
+                    first_by_track[key] = first
+                elif prev != first:
+                    consistent = False   # 同一条轨两次下载首行不同 = 串台信号
             # 跨视频重复：同一字幕文件挂在别的视频下 = 串台实锤，跳过
             owner = seen.get(subtitle_fingerprint(lines))
             if owner is not None and owner != cid:
@@ -352,7 +359,7 @@ def fetch_full_subtitle(
     if best_lines:
         seen[subtitle_fingerprint(best_lines)] = cid
         _save_seen(seen)
-    return best_sub, best_lines, (best_cov if duration else 1.0), len(fingerprints) <= 1
+    return best_sub, best_lines, (best_cov if duration else 1.0), consistent
 
 
 def get_conclusion(client: httpx.Client, bvid: str, cid: int, up_mid: int) -> tuple[str, list] | None:

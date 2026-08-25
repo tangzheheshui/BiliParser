@@ -1,122 +1,84 @@
-# 需求：授权服务器 + 网页版托管
+# 需求：授权服务器（激活码库存池 + 一次性激活）
 
-> 状态：已实现（2026-08）。独立部署、独立 venv 的 Flask 服务（`license-server/`），
-> 承载：授权（activate/verify）、AI 代理、管理后台、网页版托管、官网下载页。
-> 客户端侧（激活/离线宽限/桌面壳）见 [client.md](docs/requirements/client.md)；
-> 部署见 [deploy.md](docs/operations/deploy.md)；后台操作见
-> [admin-guide.md](docs/operations/admin-guide.md)。
+> 状态：已实现（2026-08-25，v2 模型）。**契约以 [服务器需求文档.md](服务器需求文档.md)
+> （v2.2）为准**，本文是它在项目里的落地说明。客户端侧见
+> [client.md](client.md)；部署见 [deploy.md](../operations/deploy.md)；
+> 后台操作见 [admin-guide.md](../operations/admin-guide.md)。
 
-## 定位
+## 定位（v2 重构后的边界）
 
-授权服务器是「售卖版」的核心：GLM key 只在服务器、按激活码做每日配额、随时可
-吊销。客户端只带 token 调它，不碰钱。
+服务器只做三件事：**存激活码、判一次激活、发码**。
 
-## 跨端决策（拍板与修订）
+- **一次性激活**：客户端输码时联网调一次 `POST /api/v1/license/activate`，
+  绑定 MAC、下发 HMAC token，此后**永不再联系**。服务器宕机对已激活用户零影响。
+- **不做**（相对 v1 砍掉的）：AI 代理（AI 改为用户自有 key 直连智谱/DeepSeek）、
+  启动 verify、每日配额、试用登记、远程吊销、网页版托管（hosted.py 已删除）。
+  这是有意取舍：售后只剩「发码」一件事，服务器可长期不管。
 
-> 这是整套授权体系「为什么长这样」的决策记录，客户端和服务器都受它约束。
+## 跨端决策（v2 修订记录）
 
-### 原始需求（用户方案摘要）
+| 决策点 | v1（旧） | v2（现） |
+|---|---|---|
+| AI 费用 | 服务器代理 + 按码配额 | **用户自有 key**（智谱/DeepSeek），卖家零成本零垫付 |
+| 验证方式 | 每次启动联网 verify + 72h 宽限 | **一次性激活，本地 HMAC 验签**（离线永久可用） |
+| 设备标识 | IOPlatformUUID 指纹 | **MAC 地址**（规范化：去分隔符大写 12 位 hex） |
+| 试用 | 3 天试用登记 | 无试用 |
+| 网页版 | hosted.py 多用户托管 | 删除 |
+| 框架 | Flask | **仍 Flask**（对比过 FastAPI：async/自动 422 与「HTTP 恒 200 +
+  业务码」约定相抵，规模下无收益，不换） |
 
-- 三部分：客户端（桌面软件）、授权服务器（Flask + SQLite）、管理后台
-- `licenses` 表：code / device_fingerprint / activated_at / expires_at / is_active
-- 三个 API：activate（绑定设备发 token）、verify（启动验证）、admin（生成/列表/禁用）
-- 客户端流程：无凭证→激活窗→存凭证→进主界面；有凭证→启动验证→失效则回激活窗
-- 防破解三层：指纹绑定一码一机、启动联网验证、关键逻辑放服务器
-- 部署：轻量云服务器 + SQLite + HTTPS
-
-### 拍板的决策
-
-| 决策点 | 选择 |
-|---|---|
-| AI 费用 | **服务器代理**（用户开箱即用，GLM key 只在服务器） |
-| 桌面栈 | **pywebview + PyInstaller**（复用现有 Python 后端 + HTML 界面） |
-| 平台 | 先 macOS |
-| 售卖 | **永久授权 + 一码一机**（换机走管理后台解绑） |
-
-### 对原方案的 4 处修订（为什么）
-
-1. **B 站请求不走服务器**：所有用户从同一 IP 拉 B 站必触发风控。只有
-   GLM AI 调用走服务器；字幕请求留在用户本机（用户自己的 SESSDATA）。
-2. **AI 代理加配额**：服务器付钱模式下必须有 per-license 每日配额
-   （默认 50 次/天，管理后台可调），否则一个码能刷爆账户。
-3. **72h 离线宽限**：原方案「每次启动必须联网」体验太差。服务器验证
-   成功时下发 valid_until（+72h），断网宽限期内可正常使用；AI 调用
-   仍必须在线（真正的付费价值在服务端把着）。
-4. **指纹用 IOPlatformUUID**：MAC 地址会变，不能用；macOS 用
-   `ioreg` 读 IOPlatformUUID 哈希（重装系统才变）。
-
-安全边界（如实）：Python 客户端可被逆向，混淆只防「拷贝 license.json
-到别的机器」；真正的防线 = GLM key 永不落客户端 + 服务端吊销 + 配额。
+防伪机制（与客户端文档一致）：token = HMAC-SHA256(LICENSE_SIGN_KEY,
+`sn|mac|activated_at`)。安全边界如实：密钥随客户端分发、MAC 可伪造，
+目标是防一码多机传播与随手改凭证，不防专业逆向。
 
 ## 服务器落地结构
 
 ```
-license-server/（独立部署、独立 venv）
-├── app.py           activate/verify/ai/chat/quota + trial/register + /admin 管理后台
-├── db.py            SQLite：licenses + usage + trials + trial_usage
-├── hosted.py        网页版托管（复用 src/biliparser 的字幕/总结模块）
-├── static-site/     官网下载页
-└── tests/           激活/重绑/吊销/解绑/配额/转发/托管/试用
+license-server/（独立部署、独立 venv，仅 flask 依赖）
+├── app.py           activate（限流+判活）/ admin 登录 / 取码 / 退回 / 列表 / 官网静态
+├── db.py            SQLite：license_codes + activate_logs（仅此两张表）
+├── static/admin.html  管理后台单页
+├── static-site/     官网下载页（/site）
+└── tests/test_api.py  22 用例 = 需求文档 §10 全部 16 场景 + 限流/分页/原子性
 ```
 
-试用机制（2026-08-22 上线，详见 [trial-model.md](trial-model.md)）：
-- `POST /api/trial/register {fingerprint}`：首次登记起算 72h（幂等，`trials.first_seen_at`
-  冲突不覆盖 → 删本地文件/重装无法重置），返回 `{trial, token}`；到期 `trial.active=false`
-  且不发 token。
-- `/api/ai/chat` 与 `/api/quota` 均支持 trial token（payload 前缀 `TRIAL:`），试用走
-  `trial_usage` 独立配额（`TRIAL_DAILY_QUOTA`，默认 10 次/天，后台按设备可调）；
-  到期返回 403「试用已到期，请激活后继续使用」。
-- 常量：`TRIAL_HOURS` / `TRIAL_DAILY_QUOTA`（环境变量可覆盖，上线前按需调）。
+要点：
 
-## 管理后台
-
-卖家日常发码/售后/看数据的界面，全程只认激活码、无用户注册。操作详见
-[admin-guide.md](docs/operations/admin-guide.md)，这里只记要点：
-
-- 生成 / 批量导出（对接发卡平台）/ 禁用 / 启用 / 解绑 / 调配额
-- 列表列：状态（未激活/已使用·网页/已激活·桌面/已禁用）、绑定设备、首次使用、
-  最近活跃、今日用量/配额、解绑次数
-- `licenses.db` 一个文件就是全部家当，丢了所有码作废 → 每日备份
-
-## 网页版托管（hosted.py，多用户）
-
-把 Web 工作台搬到服务器上对外发布。**一码通用**——同一个激活码既能激活桌面版
-（占设备位），也能登录网页版（不占设备位）。不需要注册系统，激活码即账号。
-
-- 登录：前端探测 `/api/status` 返回 401 → 弹登录浮层 → `POST /api/login {code}`
-  → 授权服务器 `/api/web/login` 发 WEB 指纹 token → Flask 签名 cookie（30 天）
-- 会话限制：一码最多 2 个同时在线网页会话，第 3 个登录挤掉最老（防共享）
-- SESSDATA：用户在设置面板自己填，按激活码加密落库（`user_secrets` 表，
-  SERVER_SECRET 派生密钥流异或），换浏览器不用重填
-- 自定义模板：`prompts` 表按激活码隔离
-- AI：买家在设置面板自配 API key（智谱 GLM / DeepSeek 二选一，均 OpenAI
-  兼容），加密落库；总结时服务器代调买家选的提供商（`_Cfg` 走 OpenAI 路径，
-  不设 managed_server）。**费用买家自付，卖家不垫钱、不限配额**
-- 风险边界：网页版所有用户的 B 站请求都从服务器 IP 出去（桌面版在用户本机）。
-  几十个用户可控；量大触发 B 站风控，到时需多出口 IP 分摊
-
-## 官网与安装包分发
-
-授权服务器本身就是官网：`/` 是下载页（`static-site/index.html`），
-`/download/<文件>` 下发安装包（`downloads/` 目录，不入 git）。
-Windows 包由 CI 打 tag 构建，`packaging/sync-to-server.sh` 上架。详见
-[deploy.md](docs/operations/deploy.md) 第 10 节。
+- **库存池**：启动空库自动生成 50 码；取码后未发货 < 10 自动补到 50
+  （`RESTOCK_THRESHOLD` / `RESTOCK_TARGET` 可调）。
+- **SN 格式**：`XXXX-XXXX-XXXX-XXXX`，字符集 `23456789ABCDEFGHJKMNPQRSTUVWXYZ`
+  （去 0/O/1/I/L 防看错），secrets 生成 + 唯一性检查。
+- **三态**：unshipped → shipped（取码）→ activated（终态，不可退回/重置）。
+  未发货码可直接激活（跳过取码也放行，容错设计）。
+- **取码 FIFO 原子**：`BEGIN IMMEDIATE` + CAS 更新（rowcount 校验），
+  并发下不会两个卖家拿到同一个码。
+- **HTTP 恒 200 + body 业务码**：0 成功 / 1 sn 空 / 2 无效码 / 3 设备不匹配 /
+  4 参数错 / 401 未登录 / 429 限流 / 500 服务器错 / 501 库存空。
+- **限流**：activate 按 IP 滑动窗口 60 次/分钟。
+- **管理后台**：`ADMIN_PASSWORD` 登录（未设则明确报错），Bearer token 7 天。
 
 ## 本地联调（已验证的流程）
 
 ```bash
-# 1. 授权服务器（开发模式，密钥用默认值，别用于生产）
-cd license-server && .venv/bin/python app.py        # :7900
-# 2. 管理后台生成激活码：http://127.0.0.1:7900/admin?key=dev-admin
-# 3. 工作台以发行模式启动
+# 1. 授权服务器（开发默认签名密钥，别用于生产）
+cd license-server && .venv/bin/python -m pytest   # 22 用例
+.venv/bin/python app.py                            # :7900，默认 dev-sign-key-change-me
+# 2. 管理后台取码：http://127.0.0.1:7900/admin → 登录 → 「取一个激活码」
+# 3. 客户端指向它
 BILIPARSER_LICENSE_SERVER=http://127.0.0.1:7900 uv run biliparse-web
-#    或桌面版：uv run biliparser-desktop --server http://127.0.0.1:7900
-# 4. 首次打开免激活直接进工作台（试用中·剩 72h），总结走代理（服务器计量）
-#    到期后点状态卡「输码激活」→ 输码 → 转正，试用→激活配置/模板不重置
-# 5. 打包：bash packaging/build-macos.sh → dist/BiliParser.app
+BILIPARSER_SIGN_KEY=dev-sign-key-change-me uv run biliparse-web   # 客户端同密钥
+# 4. 客户端输码激活 → 断网/杀服务器重启客户端 → 仍已激活（本地验签）
+# 5. 打包：bash packaging/build-macos.sh http://127.0.0.1:7900 <sign_key>
 ```
+
+## 官网与安装包分发
+
+`/site` 是官网下载页（`static-site/`），`/download/<文件>` 下发安装包
+（`downloads/` 目录，不入 git）。客户端底部「官网」链接固定指向
+`http://<服务器>/site`。
 
 ## 已知边界 / 后续
 
-- 发码/收款自动化（当前管理后台手动生成）
-- 订阅制：表结构已含 expires_at，生成时可填天数，无独立 UI
+- 已激活码无远程吊销手段（换机 = 让买家换码，或直接给新码）——已接受
+- expires_at 字段表里保留但当前不用
+- 发卡平台对接：管理后台取码后手动导入

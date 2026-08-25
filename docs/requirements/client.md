@@ -1,9 +1,11 @@
 # 需求：客户端（CLI + Web 工作台 + 桌面版）
 
-> 状态：已实现（2026-08）。客户端 = 一个 Python 包 `src/biliparser/` 的三个入口：
-> `biliparse`（CLI）、`biliparse-web`（本机 Web 工作台）、`biliparser-desktop`（桌面壳）。
-> 授权体系另一端的服务器需求见 [server.md](docs/requirements/server.md)；实现原理见
-> [architecture.md](docs/design/architecture.md)。
+> 状态：已实现（2026-08；激活体系 2026-08-25 按 v2 文档重构）。客户端 = 一个
+> Python 包 `src/biliparser/` 的三个入口：`biliparse`（CLI）、`biliparse-web`
+> （本机 Web 工作台）、`biliparser-desktop`（桌面壳）。
+> 授权契约见 [客户端需求文档.md](客户端需求文档.md) 与
+> [服务器需求文档.md](服务器需求文档.md)；落地说明见 [server.md](server.md)；
+> 实现原理见 [architecture.md](../design/architecture.md)。
 
 ## 一句话定位
 
@@ -152,8 +154,10 @@
 
 对策（三层）：
 
-1. `fetch_full_subtitle` 用「各次下载的首行指纹」做一致性检测（同一视频的
-   合法版本渐进生成只增不改，首行应一致），不一致 → `consistent=False`
+1. `fetch_full_subtitle` 用「**同一条字幕轨**多轮下载的首行指纹」做一致性检测
+   （同一轨的合法版本渐进生成只增不改，首行应一致），不一致 →
+   `consistent=False`。注意按轨（id/lan）分组比对：CC 与 AI、多语言轨之间
+   内容本就不同，混在一起比会**对多轨视频必误报**（2026-08-25 实测翻车修正）
 2. CLI 打印警告、Web 字幕页签显示红色警示条
 3. 总结 prompt 加护栏：字幕与标题/简介明显无关时拒绝总结，说明字幕实际内容
 
@@ -173,6 +177,70 @@
   关键词/时间戳 chip 化
 - 自定义模板不再开独立 ★ 页签，而是替换「总结」页签的生成提示词
 
+### 迭代需求（v7）：配置真实值回显 + 保存校验（2026-08-25 拍板）
+
+用户反馈「状态卡显示已配置但设置面板看不到值」。拍板语义（原做在网页版
+hosted.py，v2 删网页版时丢失，2026-08-25 补回本地客户端）：
+
+- **设置面板必须显示已配置的真实值**：`config/get` 返回 `sessdata_value` /
+  `api_key_value` 原文，面板直接回填输入框；不再用「已配置，留空保持不变」占位
+- **改动才提交、清空 = 删除**：字段提交空串即删掉该配置
+- **状态卡缩略展示**：`sessdata_short` / `api_key_short`（`f839…IIEC` 式，前 4 后 4），
+  不泄露全文
+- **保存时校验**：SESSDATA 实测登录态（nav 接口）、API Key 发最小一次对话；
+  返回 `*_valid`（true/false/null），失效红字「已保存，但已失效，不会生效」；
+  网络不通 = null 不武断判死。打开面板不主动校验（显示中性提示）
+
+### 迭代需求（v8）：状态卡真实校验 + 界面收敛（2026-08-25）
+
+用户反馈「配置不对也显示绿色已配置」「设置界面乱」。落地：
+
+- **状态卡启动即校验**：新增 `GET /api/config/validate`，前端两步渲染——先按
+  配置有无出绿/红徽标，再异步校验，失效变红色「已失效」。校验结果**按值缓存**
+  （进程级 `_VALID_CACHE`，同值只联网测一次，改值才重测）
+- **「关于」入口**：删掉关于按钮与弹框，品牌名「BiliParser 工作台」本身可点 →
+  官网（`OFFICIAL_SITE`，服务器根路径；服务器加 `/ → /site` 跳转）。
+  点击走 `fetch('/open-official')` 由后端调系统浏览器打开，**app 窗口不发生导航**
+  （此前 href 导航会把 pywebview 窗口整个带到网页，是缺陷）
+- **设置面板收敛**：
+  - 必填/格式提示移入输入框 placeholder（label 只剩「AI API Key」「B 站 SESSDATA」）
+  - 删独立的提供商识别徽章，识别结果（含已配提供商）并入 Key 下方唯一状态行，
+    输入时实时显示「✓ 将识别为 DeepSeek / 智谱 GLM」
+  - SESSDATA 六步教程 + 截图收进默认折叠的 `<details>`，文案不带括号补充说明
+  - 「配置保存在 xxx」整行删掉（不显示路径，也不要悬浮提示）
+
+### 迭代需求（v9）：激活门收紧 + 状态卡激活行（2026-08-25）
+
+用户拍板「不激活不能用」：
+
+- **启动硬门**：发行版启动 `location.replace('/activate.html')`，工作台不可见；
+  激活成功跳回。点「生成」未激活也直接跳激活页
+- **后端集中门**（`web._gate`）：`do_POST` 除 `/api/license/*` 外全部先验本地
+  签名，不过 → 403「未激活，应用不可用」。绕过前端直打本地接口也无效
+- **状态卡**：删掉 SESSDATA/API Key 的缩略值展示；新增常驻「激活」行——
+  发行版 已激活（绿）/未激活（红+输码入口），直连版 免激活（绿）
+- **管理后台同步精简**（license-server）：删状态筛选页签与创建时间/备注列，
+  加 SN 片段搜索；操作只剩 退回（已发货）+ **解绑**（已激活，换电脑售后，
+  清绑定回已发货可再激活）。不做限额、不做禁用
+
+### 迭代需求（v10）：烧入文件鲁棒读取 + 更新提示 + 版本单一来源（2026-08-25）
+
+用户实测激活版显示「免激活」翻车，三个叠加原因一并修死：
+
+- **烧入文件位置漂移**：frozen 包里 biliparser 目录随 PyInstaller 版本落在
+  Resources/ 或 Frameworks/，烧入文件与运行时 `__file__` 不在一处 → 读不到
+  服务器地址 → 被当直连版。修复：`licensing.bundled_text()` 把包目录、
+  `_MEIPASS`、Contents/{Resources,Frameworks}/biliparser 全试一遍；
+  build 脚本打完包往两处各塞一份双保险
+- **版本单一来源**：`__init__.__version__`（0.2.1 起），spec 的 Info.plist 与
+  下载页 version.json 都由它生成，杜绝两处手写对不上
+- **启动更新提示**：`GET /api/update-check` 后端代抓官网 version.json 比对
+  （避免跨域），前端左栏横幅「新版本 x 可用 → 去下载」；服务器挂了静默。
+  已装出去的旧版无法自升级，用户手动换新；激活凭证在 `~/.biliparser/`，
+  换新版本不丢激活
+- **产物线只留激活版**（用户拍板）：不再维护直连版产物；服务器、桌面、
+  dist/ 三处同一 md5，上传后必须核对
+
 ### Web 工作台边界
 
 - 时间戳跳转采用整帧重载播放器，会有一次短暂刷新（跨域限制下的折中）
@@ -181,42 +249,47 @@
 
 ## 入口三：桌面版 + 激活码（biliparser-desktop）
 
-发行版：一码一机 + 72h 离线宽限；AI 调用经授权服务器代理（服务器持有 GLM key、
-按码每日限流），B 站请求仍走用户本机。整体需求与跨端决策（为什么 AI 走服务器、
-为什么一码一机）见 [server.md](docs/requirements/server.md)，这里只记客户端自己要做的事。
+发行版：**一次性激活，激活后永久离线**。输码联网一次绑定 MAC、取回 HMAC 凭证；
+此后每次启动本地重算验签，不再联系服务器。AI 用用户自有 key（智谱/DeepSeek）
+直连，费用自付。**契约以 [客户端需求文档.md](客户端需求文档.md)（v2.1）为准**，
+服务器侧与跨端决策见 [server.md](server.md)，这里只记客户端落地。
 
-### 客户端侧决策
+### 客户端侧决策（v2，2026-08-25 重构）
 
-- **桌面栈 pywebview + PyInstaller**：复用现有 Python 后端 + HTML 界面。
-- **72h 离线宽限**：每次启动必须联网体验太差 → 服务器验证成功下发
-  `valid_until`（+72h），断网宽限期内可正常使用；AI 调用仍必须在线。
-- **指纹用 IOPlatformUUID**：MAC 地址会变，不能用；macOS 用 `ioreg` 读
-  IOPlatformUUID 哈希（重装系统才变）。
-- **试用 3 天（2026-08-22）**：免激活直接进工作台。首次访问
-  `/api/license/state` 自动向服务器登记指纹（`licensing.trial_register` →
-  `POST /api/trial/register`），试用 token 落盘 `~/.biliparser/trial.json`。
-  状态卡显示「试用中·剩 X 小时」+ 今日 AI 配额；到期只锁 AI 生成
-  （总结报错引导「输码激活」，字幕/解析仍可用）。试用→激活无缝衔接，
-  配置/模板/缓存保留不重置。试用凭证价值低，trial.json 明文存储。
+- **桌面栈 pywebview + PyInstaller**：复用现有 Python 后端 + HTML 界面（不变）。
+- **一码一机用 MAC**：macOS 取第一块 ether 非零的 `en<N>`（即 en0 内置网卡），
+  Windows 用 getmac；上送原值、由服务器统一规范化（去分隔符大写）。
+- **本地验签**：token = HMAC-SHA256(内置密钥, `sn|mac|activated_at`)，
+  启动时重算比对 + 核对当前 MAC。失败一律走激活窗（不判死）。
+- **凭证机器绑定**：`~/.biliparser/license.json`（v2 格式，MAC 派生密钥流
+  异或混淆），拷到别的机器解出乱码 → 视为未激活。
+- **无试用、无宽限、不激活不能用**（2026-08-25 收紧）：启动即查本地验签，
+  未激活直接进激活页；后端业务接口（解析/字幕/总结/模板/配置写）全拦 403，
+  只放行 `/api/license/*`。直连自用版（未烧服务器地址）不设门。
+- **官网链接**：底部固定「官网」→ 系统浏览器打开服务器 `/site`。
 
 ### 客户端落地结构
 
 ```
 src/biliparser/
-├── licensing.py    指纹/激活/凭证（机器绑定混淆）/验证 + 72h 离线宽限 + 试用登记
+├── licensing.py    MAC 读取/规范化、一次性激活、凭证（机器绑定混淆）、本地 HMAC 验签
 ├── desktop.py      pywebview 壳（本地服务 + 原生窗口）
-├── static/activate.html   激活页
-├── web.py          /api/license/*、/api/config/* 路由；试用登记触发；设置面板
-└── summarizer.py   cfg.managed_server 有值 → AI 走 /api/ai/chat 代理（auth_header 自动选正式/试用 token）
+├── static/activate.html   激活页（XXXX-XXXX-XXXX-XXXX 输入）
+├── web.py          /api/license/state|activate、/api/config/*（仅智谱/DeepSeek）、/api/status
+└── summarizer.py   恒走用户自有 key 直连（智谱 Anthropic 端点 / OpenAI 兼容路径）
 ```
 
 打包：`packaging/` 的 `biliparser.spec` + `build-macos.sh` / `build-windows.sh`
-→ `dist/BiliParser.app` / `dist/BiliParser/`（Windows 正式安装包由 CI 打 tag 构建，
-上架见 [deploy.md](docs/operations/deploy.md) 第 10 节）。
+→ `dist/BiliParser.app` / `dist/BiliParser/`。打包时烧入两样：
+激活服务器地址（`_dist_server.txt`）与签名密钥（`_sign_key.txt`，
+必须与服务器 `LICENSE_SIGN_KEY` 一致）。
 
 ### 客户端侧已知边界 / 后续
 
-- Windows 打包走 CI（MachineGuid 指纹）；正式签名/公证未做（用户首次打开需右键→打开）
+- 签名密钥随包分发，理论可被提取（防传播不防逆向，需求文档 5.3 已接受）
+- 换网卡/换机 → 本地验签「设备不匹配」→ 重新输码；服务器端已绑定的码
+  会拒绝（需卖家发新码，无解绑功能）
+- Windows 打包走 CI；正式签名/公证未做（用户首次打开需右键→打开）
 - ASR 兜底：`--asr` / `asr.py` 已实现（faster-whisper），模型下载需国内镜像
   `HF_ENDPOINT=https://hf-mirror.com`；仅串台视频可选，正常视频仍走字幕秒出
 

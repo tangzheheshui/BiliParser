@@ -1,11 +1,10 @@
 [project]
 name = "biliparser-license-server"
-version = "0.1.0"
-description = "BiliParser 授权服务器：激活码验证 + AI 调用代理 + 管理后台"
+version = "0.2.0"
+description = "BiliParser 授权服务器：激活码库存管理 + 一次性激活鉴权 + 管理后台"
 requires-python = ">=3.12"
 dependencies = [
     "flask>=3.0",
-    "httpx>=0.28",
 ]
 
 [project.optional-dependencies]

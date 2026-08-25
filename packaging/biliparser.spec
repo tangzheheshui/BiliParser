@@ -7,21 +7,30 @@
 资源：src/biliparser/static/* → 产物内 biliparser/static/
       （web.py 用 Path(__file__).parent/'static' 定位，frozen 下同样成立）
 
-发行版：构建时 packaging/_dist_server.txt 存在则烧入授权服务器地址
-（用户拿到即要求激活）；不存在 = 自用直连版。
+发行版：构建时 packaging/_dist_server.txt 存在则烧入授权服务器地址，
+packaging/_sign_key.txt 存在则烧入签名密钥（须与服务器 LICENSE_SIGN_KEY 一致，
+客户端靠它本地验签）；都不存在 = 自用直连版。
 """
 
+import re
 import sys
 from pathlib import Path
 
 ROOT = Path(SPECPATH).parent
 STATIC = ROOT / "src" / "biliparser" / "static"
 DIST_SERVER_FILE = ROOT / "packaging" / "_dist_server.txt"
+SIGN_KEY_FILE = ROOT / "packaging" / "_sign_key.txt"
 IS_MAC = sys.platform == "darwin"
+# 版本单一来源：src/biliparser/__init__.py 的 __version__（Info.plist 跟着走，
+# 别再手写两处对不上——下载页 version.json 也由 build-macos.sh 从这里生成）
+VERSION = re.search(r'__version__ = "([^"]+)"',
+                    (ROOT / "src" / "biliparser" / "__init__.py").read_text(encoding="utf-8")).group(1)
 
 datas = [(str(STATIC), "biliparser/static")]
 if DIST_SERVER_FILE.exists():
     datas.append((str(DIST_SERVER_FILE), "biliparser"))
+if SIGN_KEY_FILE.exists():
+    datas.append((str(SIGN_KEY_FILE), "biliparser"))
 
 hidden = ["biliparser.desktop"]
 if IS_MAC:
@@ -69,8 +78,8 @@ if IS_MAC:
         name="BiliParser.app",
         info_plist={
             "CFBundleDisplayName": "BiliParser",
-            "CFBundleShortVersionString": "0.1.0",
-            "CFBundleVersion": "0.1.0",
+            "CFBundleShortVersionString": VERSION,
+            "CFBundleVersion": VERSION,
             "LSMinimumSystemVersion": "12.0",
             # 允许 http 授权服务器（内网/初期）；正式上线换 https 后可删
             "NSAppTransportSecurity": {"NSAllowsArbitraryLoads": True},

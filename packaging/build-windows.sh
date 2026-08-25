@@ -2,7 +2,7 @@
 # BiliParser Windows 打包：PyInstaller 出 onedir，再用 Inno Setup 打单文件安装包
 # 用法：
 #   bash packaging/build-windows.sh                              # 自用直连版（无激活）
-#   bash packaging/build-windows.sh https://lic.example.com      # 发行版（烧入授权服务器，首启要求激活）
+#   bash packaging/build-windows.sh <服务器URL> <签名密钥>        # 发行版（烧入服务器+密钥，首启要求激活）
 #
 # 前置：
 #   uv sync --group desktop                                      # pywebview + pyinstaller
@@ -11,11 +11,17 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 SERVER="${1:-}"
+SIGN_KEY="${2:-}"
 DIST_SERVER_FILE="packaging/_dist_server.txt"
-rm -f "$DIST_SERVER_FILE"
+SIGN_KEY_FILE="packaging/_sign_key.txt"
+rm -f "$DIST_SERVER_FILE" "$SIGN_KEY_FILE"
 if [ -n "$SERVER" ]; then
   printf '%s' "$SERVER" > "$DIST_SERVER_FILE"
   echo "[发行版] 烧入授权服务器: $SERVER"
+fi
+if [ -n "$SIGN_KEY" ]; then
+  printf '%s' "$SIGN_KEY" > "$SIGN_KEY_FILE"
+  echo "[发行版] 烧入签名密钥: ${SIGN_KEY:0:4}****（必须与服务器 LICENSE_SIGN_KEY 一致）"
 fi
 
 PY=".venv/Scripts/python.exe"
@@ -47,4 +53,4 @@ else
   echo "       安装 https://jrsoftware.org/isinfo.php 后重跑本脚本即可产出 setup.exe"
 fi
 
-rm -f "$DIST_SERVER_FILE"
+rm -f "$DIST_SERVER_FILE" "$SIGN_KEY_FILE"

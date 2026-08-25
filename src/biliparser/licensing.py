@@ -1,22 +1,28 @@
-"""客户端授权：设备指纹、激活、凭证存取（机器绑定混淆）、验证 + 72h 离线宽限。
+"""客户端鉴权：一次性激活 + 本地 HMAC 验签（激活后永久离线）。
 
-安全边界（如实）：本文件落在客户端，可被逆向。混淆只防「拷贝 license.json
-到别的机器」这种顺手盗用；真正的防线在服务器——AI 调用必须持有效 token
-实时过服务器校验，吊销/配额都在服务端生效。
+按 docs/requirements/客户端需求文档.md v2.1：
+- 激活：仅无凭证/校验失败时，由用户在激活窗口输码触发一次联网请求；
+- 校验：每次启动本地重算 HMAC-SHA256(sn|mac|activated_at) 比对 token，
+  并核对当前机器 MAC——全程不联网，服务器宕机零影响；
+- 设备标识：本机 MAC（取第一块有效物理网卡，多网卡固定策略 CR-03）。
+
+安全边界（如实）：签名密钥随客户端分发，理论上可被提取；MAC 也可被伪造。
+目标是防「一码多机传播」与随手篡改凭证，不防专业逆向（文档 5.3）。
 """
 
 import hashlib
+import hmac
 import json
+import re
 import subprocess
 import sys
-import time
+import uuid
 from pathlib import Path
 
 import httpx
 
 LICENSE_PATH = Path.home() / ".biliparser" / "license.json"
-TRIAL_PATH = Path.home() / ".biliparser" / "trial.json"
-GRACE_SECONDS = 72 * 3600  # 服务器下发的 valid_until 之后再宽限这么久
+OFFICIAL_SITE = "http://193.112.26.217:7900/"   # 品牌名点击跳转的官网（固定字符串，改这里）
 
 
 class LicensingError(Exception):
@@ -25,41 +31,96 @@ class LicensingError(Exception):
         self.hint = hint
 
 
-# ---------------- 设备指纹 ----------------
+# ---------------- 签名密钥（与服务器 LICENSE_SIGN_KEY 完全一致，CR-04） ----------------
 
-def fingerprint() -> str:
-    """稳定设备指纹：Windows 用注册表 MachineGuid、macOS 用 IOPlatformUUID
-    （两者都是重装系统/换机器才变），其他平台回退到 home 目录哈希。"""
-    if sys.platform == "win32":
+def bundled_text(name: str) -> str:
+    """读打包时烧入的文本（_dist_server.txt / _sign_key.txt），没有则空串。
+
+    frozen 包里 biliparser 目录的物理位置随 PyInstaller 版本/布局漂移——
+    同一工程出过 Resources/ 与 Frameworks/ 两种，烧入文件跟运行时
+    __file__ 不在一起，正式版就被当成直连版显示「免激活」（2026-08-25
+    实测翻车）。这里把常见候选位置全试一遍，烧在哪都认；开发环境即包目录。
+    """
+    here = Path(__file__).parent
+    candidates = [here]
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidates += [Path(meipass) / "biliparser", Path(meipass)]
+    top = here.parent.parent                      # .app 的 Contents 目录
+    candidates += [top / "Resources" / "biliparser", top / "Frameworks" / "biliparser"]
+    for cand in candidates:
         try:
-            import winreg
-            with winreg.OpenKey(
-                winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography"
-            ) as key:
-                guid, _ = winreg.QueryValueEx(key, "MachineGuid")
-            if guid:
-                return "WIN-" + hashlib.sha256(str(guid).encode()).hexdigest()[:24]
+            txt = (cand / name).read_text(encoding="utf-8").strip()
         except OSError:
+            continue
+        if txt:
+            return txt
+    return ""
+
+
+def _sign_key() -> str:
+    """内置签名密钥：打包时烧入 _sign_key.txt（见 packaging/build-macos.sh）；
+    开发时可用环境变量 BILIPARSER_SIGN_KEY 覆盖；都没有用开发默认值
+    （与服务器的开发默认一致，本地联调开箱即用）。"""
+    key = bundled_text("_sign_key.txt")
+    if key:
+        return key
+    import os
+    return os.environ.get("BILIPARSER_SIGN_KEY", "") or "dev-sign-key-change-me"
+
+
+# ---------------- MAC 地址（设备唯一标识） ----------------
+
+def _format_mac(n: int) -> str:
+    return ":".join(f"{(n >> s) & 0xFF:02x}" for s in range(40, -1, -8))
+
+
+def mac_address() -> str:
+    """本机 MAC 原值（如 aa:bb:cc:dd:ee:ff）。取第一块有效物理网卡：
+
+    - macOS：ifconfig 接口列表里第一个 en<N> 且 ether 非零（en0 = 内置网卡）；
+    - Windows：getmac 输出的第一条；
+    - 其他/兜底：uuid.getnode()（读网络栈的 MAC，非随机时可用）。
+    上送给服务器的是原值，规范化（去分隔符大写）由服务器统一做（FR-02）。
+    """
+    if sys.platform == "darwin":
+        try:
+            out = subprocess.run(["ifconfig", "-l"], capture_output=True,
+                                 text=True, timeout=5).stdout.split()
+            for name in out:
+                if re.fullmatch(r"en\d+", name):
+                    info = subprocess.run(["ifconfig", name], capture_output=True,
+                                          text=True, timeout=5).stdout
+                    m = re.search(r"ether\s+([0-9a-fA-F:]{17})", info)
+                    if m and set(m.group(1)) != {"0", ":"}:   # 排全零
+                        return m.group(1).lower()
+        except (OSError, subprocess.SubprocessError):
             pass
-    try:
-        out = subprocess.run(
-            ["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"],
-            capture_output=True, text=True, timeout=5,
-        )
-        for line in out.stdout.splitlines():
-            if "IOPlatformUUID" in line:
-                uuid = line.split("=")[-1].strip().strip('"')
-                return "MAC-" + hashlib.sha256(uuid.encode()).hexdigest()[:24]
-    except (OSError, subprocess.SubprocessError):
-        pass
-    raw = f"{Path.home()}"
-    return "FB-" + hashlib.sha256(raw.encode()).hexdigest()[:24]
+    elif sys.platform == "win32":
+        try:
+            out = subprocess.run(["getmac", "/fo", "csv", "/nh"],
+                                 capture_output=True, text=True, timeout=5).stdout
+            for line in out.splitlines():
+                m = re.search(r"([0-9A-Fa-f]{2}[-:]){5}[0-9A-Fa-f]{2}", line or "")
+                if m and set(m.group(0)) - {"0", "-", ":"}:
+                    return m.group(0)
+        except (OSError, subprocess.SubprocessError):
+            pass
+    n = uuid.getnode()
+    if n and not (n & 0x010000000000) and (n & 0xFEFFFFFFFFFF):  # 非组播、非全零
+        return _format_mac(n)
+    return "00:00:00:00:00:00"          # 兜底占位（服务器会按格式放行/拒绝）
 
 
-# ---------------- 凭证存储（机器绑定混淆） ----------------
+def normalize_mac(raw: str) -> str:
+    """与服务器同一规则：去分隔符大写（客户端文档 5.1 步骤 3 用）。"""
+    return re.sub(r"[^0-9A-Fa-f]", "", str(raw or "")).upper()
+
+
+# ---------------- 凭证存储（机器绑定混淆，沿用原机制） ----------------
 
 def _keystream(seed: str, n: int) -> bytes:
-    """指纹派生密钥流：sha256 计数器模式。换台机器密钥不同，拷文件无效。"""
+    """MAC 派生密钥流：sha256 计数器模式。换台机器密钥不同，拷文件无效。"""
     out = b""
     counter = 0
     while len(out) < n:
@@ -68,37 +129,44 @@ def _keystream(seed: str, n: int) -> bytes:
     return out[:n]
 
 
-def _obfuscate(text: str, fp: str) -> str:
+def _obfuscate(text: str, seed: str) -> str:
     data = text.encode()
-    key = _keystream(fp, len(data))
+    key = _keystream(seed, len(data))
     return bytes(a ^ b for a, b in zip(data, key)).hex()
 
 
-def _deobfuscate(hex_text: str, fp: str) -> str:
+def _deobfuscate(hex_text: str, seed: str) -> str:
     data = bytes.fromhex(hex_text)
-    key = _keystream(fp, len(data))
+    key = _keystream(seed, len(data))
     return bytes(a ^ b for a, b in zip(data, key)).decode("utf-8", errors="replace")
 
 
-def _save(server_url: str, token: str, valid_until: str, fp: str) -> None:
-    payload = json.dumps({"server_url": server_url, "token": token,
-                          "valid_until": valid_until}, ensure_ascii=False)
+def _seed() -> str:
+    return normalize_mac(mac_address())
+
+
+def _save(sn: str, mac: str, activated_at: str, token: str) -> None:
+    payload = json.dumps({"sn": sn, "mac": mac, "activated_at": activated_at,
+                          "token": token}, ensure_ascii=False)
     LICENSE_PATH.parent.mkdir(parents=True, exist_ok=True)
     LICENSE_PATH.write_text(
-        json.dumps({"v": 1, "data": _obfuscate(payload, fp)}), encoding="utf-8"
+        json.dumps({"v": 2, "data": _obfuscate(payload, _seed())}),
+        encoding="utf-8",
     )
 
 
-def load_credential(fp: str | None = None) -> dict | None:
-    """读取本地凭证；文件不存在/损坏/指纹不符（拷来的）返回 None。"""
+def load_credential(seed: str | None = None) -> dict | None:
+    """读本地凭证；文件不存在/损坏/换机器（MAC 不同→乱码）/缺任一字段 → None。
+
+    凭证四字段作为整体存取，任一缺失即无效（客户端文档 4.3）。
+    """
     if not LICENSE_PATH.exists():
         return None
     try:
         raw = json.loads(LICENSE_PATH.read_text(encoding="utf-8"))
-        payload = _deobfuscate(raw["data"], fp or fingerprint())
-        cred = json.loads(payload)
-        return {k: cred[k] for k in ("server_url", "token", "valid_until")}
-    except (KeyError, ValueError, OSError):
+        cred = json.loads(_deobfuscate(raw["data"], seed or _seed()))
+        return {k: str(cred[k]) for k in ("sn", "mac", "activated_at", "token")}
+    except (KeyError, ValueError, TypeError, OSError):
         return None
 
 
@@ -106,127 +174,60 @@ def clear_credential() -> None:
     LICENSE_PATH.unlink(missing_ok=True)
 
 
-# ---------------- 试用登记与凭证 ----------------
+# ---------------- 激活（唯一联网交互，一次性） ----------------
 
-def trial_register(server_url: str, fp: str | None = None) -> dict:
-    """试用登记：向服务器登记设备指纹并领试用 token，成功后落盘 trial.json。
+def activate(server_url: str, sn: str) -> dict:
+    """输码激活：POST /api/v1/license/activate {mac, sn}，成功存凭证。
 
-    服务器按指纹记住首次连接时间（72h 起算），幂等——删本地文件重装后
-    重复登记返回同一试用起点，试不重置。到期时不发 token（返回
-    trial.active=False），客户端据此引导激活。网络不通抛 LicensingError。
+    返回码按客户端文档 3.3 处理；网络异常/500 统一「网络异常，请稍后再试」
+    （已激活用户不受影响：本地凭证仍在，无需再调本函数）。
     """
-    fp = fp or fingerprint()
     try:
         resp = httpx.post(
-            server_url.rstrip("/") + "/api/trial/register",
-            json={"fingerprint": fp}, timeout=15,
+            server_url.rstrip("/") + "/api/v1/license/activate",
+            json={"mac": mac_address(), "sn": str(sn or "").strip()},
+            timeout=10,
         )
-    except httpx.HTTPError as e:
-        raise LicensingError(
-            f"连不上授权服务器（{e.__class__.__name__}）", hint="检查网络后重试"
-        ) from e
-    data = resp.json() if resp.content else {}
-    if resp.status_code != 200:
-        raise LicensingError(
-            data.get("error", f"试用登记失败（HTTP {resp.status_code}）"),
-            hint=data.get("hint"),
-        )
-    trial = data.get("trial", {})
-    token = data.get("token")
-    if token:
-        TRIAL_PATH.parent.mkdir(parents=True, exist_ok=True)
-        TRIAL_PATH.write_text(
-            json.dumps({"v": 1, "server_url": server_url.rstrip("/"),
-                        "token": token, "fingerprint": fp,
-                        "expires_at": trial.get("expires_at", "")}),
-            encoding="utf-8",
-        )
-    return trial
-
-
-def load_trial(fp: str | None = None) -> dict | None:
-    """读本地试用凭证；文件缺失/损坏返回 None。"""
-    if not TRIAL_PATH.exists():
-        return None
-    try:
-        return json.loads(TRIAL_PATH.read_text(encoding="utf-8"))
-    except (ValueError, OSError):
-        return None
-
-
-def trial_state(server_url: str, fp: str | None = None) -> dict:
-    """获取试用状态（首次自动登记落盘 token）。每次向服务器确认，返回最新
-    remaining / 配额 / 今日用量；到期返回 {active: False}。"""
-    return trial_register(server_url, fp)
-
-
-# ---------------- 激活与验证 ----------------
-
-def activate(server_url: str, code: str, fp: str | None = None) -> dict:
-    """输码激活：服务器绑定设备并发 token，成功后凭证落盘。"""
-    fp = fp or fingerprint()
-    try:
-        resp = httpx.post(
-            server_url.rstrip("/") + "/api/activate",
-            json={"code": code.strip(), "fingerprint": fp}, timeout=15,
-        )
-    except httpx.HTTPError as e:
-        raise LicensingError(
-            f"连不上授权服务器（{e.__class__.__name__}）", hint="检查网络后重试"
-        ) from e
-    data = resp.json() if resp.content else {}
-    if resp.status_code != 200:
-        raise LicensingError(
-            data.get("error", f"激活失败（HTTP {resp.status_code}）"),
-            hint=data.get("hint"),
-        )
-    _save(server_url, data["token"], data["valid_until"], fp)
-    return data
-
-
-def verify(server_url: str | None = None, fp: str | None = None,
-           now: float | None = None) -> dict:
-    """启动验证。返回 {ok, online, reason, usage, valid_until}。
-
-    逻辑：本地无凭证 → 未激活；在线验证成功 → 刷新宽限期；服务器明确说
-    无效 → 拒绝（吊销/解绑/过期）；网络不通 → 72h 宽限内放行（离线模式）。
-    """
-    now = now if now is not None else time.time()
-    fp = fp or fingerprint()
-    cred = load_credential(fp)
-    if not cred:
-        return {"ok": False, "online": False, "reason": "未激活"}
-
-    base = (server_url or cred["server_url"]).rstrip("/")
-    try:
-        resp = httpx.post(base + "/api/verify", json={"token": cred["token"]}, timeout=8)
-        data = resp.json() if resp.content else {}
-        if resp.status_code == 200 and data.get("valid"):
-            _save(cred["server_url"], cred["token"], data["valid_until"], fp)
-            return {"ok": True, "online": True, "usage": data.get("usage"),
-                    "valid_until": data["valid_until"]}
-        reason = data.get("message", "凭证无效")
-        return {"ok": False, "online": True, "reason": reason}
     except httpx.HTTPError:
-        pass  # 离线：走宽限判定
-
+        raise LicensingError("网络异常，请稍后再试",
+                             hint="检查网络后重试；已激活的设备不受影响")
     try:
-        from datetime import datetime
-        valid_until = datetime.fromisoformat(cred["valid_until"]).timestamp()
-    except (ValueError, KeyError):
-        valid_until = 0
-    if now < valid_until + 0:  # 服务器已把 72h 算进 valid_until
-        return {"ok": True, "online": False, "reason": "离线宽限期内", "valid_until": cred["valid_until"]}
-    return {"ok": False, "online": False, "reason": "离线超过 72 小时，请联网后重启验证"}
+        body = resp.json()
+        code = body.get("code")
+    except ValueError:
+        code = 500
+    if resp.status_code != 200:
+        code = 500
+    if code == 0:
+        data = body["data"]
+        _save(data["sn"], data["mac"], data["activated_at"], data["token"])
+        return data
+    messages = {
+        1: "未激活",
+        2: "激活码无效，请检查输入",
+        3: "该激活码已被其他设备使用",
+        4: "参数错误（MAC 为空或格式非法）",
+        429: "请求过于频繁，请稍后再试",
+    }
+    raise LicensingError(messages.get(code, "网络异常，请稍后再试"))
 
 
-def auth_header(fp: str | None = None) -> dict:
-    """AI 代理请求头：正式凭证优先，其次试用 token；都没有时报 LicensingError。"""
-    fp = fp or fingerprint()
-    cred = load_credential(fp)
-    if cred:
-        return {"Authorization": f"Bearer {cred['token']}"}
-    trial = load_trial(fp)
-    if trial and trial.get("token"):
-        return {"Authorization": f"Bearer {trial['token']}"}
-    raise LicensingError("未激活，无法使用 AI 服务", hint="请先在激活页输入激活码")
+# ---------------- 启动本地校验（不联网） ----------------
+
+def verify_local(seed: str | None = None, key: str | None = None,
+                 current_mac: str | None = None) -> dict:
+    """启动校验，返回 {ok, reason}。失败一律走激活流程，不判死（CR-02）。
+
+    1. 四字段齐全；2. 重算 HMAC 与 token 比对；3. 当前 MAC 与凭证 MAC 比对。
+    """
+    cred = load_credential(seed)
+    if not cred:
+        return {"ok": False, "reason": "未激活"}
+    msg = f"{cred['sn']}|{cred['mac']}|{cred['activated_at']}".encode()
+    expect = hmac.new((key or _sign_key()).encode(), msg, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expect, cred["token"]):
+        return {"ok": False, "reason": "凭证校验失败"}
+    mac_now = current_mac if current_mac is not None else normalize_mac(mac_address())
+    if mac_now != cred["mac"]:
+        return {"ok": False, "reason": "设备不匹配"}
+    return {"ok": True, "reason": ""}

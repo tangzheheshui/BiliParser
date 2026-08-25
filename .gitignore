@@ -21,3 +21,15 @@ build/
 
 # 安装包分发目录（由 sync-to-server.sh 同步，不入库）
 license-server/downloads/
+
+# 运行时日志（滚动轮转，不入 git）
+logs/
+
+# 发行版打包烧入的签名密钥（秘密，绝不入库）
+packaging/_sign_key.txt
+
+# 激活码数据库（真实码+买家MAC，绝不入库）
+license-server/licenses.db
+
+# macOS 垃圾
+.DS_Store

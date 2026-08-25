@@ -22,23 +22,26 @@ body{background:var(--bg);color:var(--text);font:14px/1.6 -apple-system,"PingFan
 /* 左栏 */
 .brand{display:flex;align-items:center;gap:8px;font-weight:700;font-size:16px;padding:14px 16px;border-bottom:1px solid var(--line)}
 .brand .dot{width:10px;height:10px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent)}
-.brand .gear{margin-left:auto;border:none;background:none;color:var(--dim);cursor:pointer;font-size:15px;padding:2px 4px}
+.brand a{color:inherit;text-decoration:none}
+.brand a:hover{color:var(--accent2)}
+.brand .gear{margin-left:auto;border:none;background:none;color:var(--dim);cursor:pointer;font-size:21px;padding:3px 6px;line-height:1}
 .brand .gear:hover{color:var(--accent2)}
 #settings{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:50}
 #settings.show{display:flex}
-#settings .card{width:430px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:22px}
+#settings .card{width:470px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:24px;max-height:90vh;overflow-y:auto}
 #settings h3{font-size:15px;margin-bottom:4px}
-#settings .sub{color:var(--dim);font-size:12px;margin-bottom:14px}
-#settings label{display:block;font-size:12px;color:var(--dim);margin:12px 0 5px}
-#settings input{width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--text);padding:8px 12px;font-size:13px;outline:none}
+#settings .sub{color:var(--dim);font-size:12px;margin-bottom:16px}
+#settings label{display:block;font-size:12.5px;color:var(--dim);margin:16px 0 6px}
+#settings input{width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:9px;color:var(--text);padding:10px 13px;font-size:13.5px;outline:none}
 #settings input:focus{border-color:var(--accent)}
-#settings .acts{display:flex;gap:8px;margin-top:18px}
-#settings .acts button{flex:1;padding:8px;border-radius:8px;border:none;cursor:pointer;font-size:13px}
+#settings .sect{border:1px solid var(--line);border-radius:11px;padding:14px 14px 12px;margin-top:14px;background:rgba(255,255,255,.015)}
+#settings .sect > label:first-child{margin-top:0}
+#settings .acts{display:flex;gap:8px;margin-top:20px}
+#settings .acts button{flex:1;padding:9px;border-radius:9px;border:none;cursor:pointer;font-size:13px}
 #settings .save{background:linear-gradient(135deg,#2b6cb0,#3182ce);color:#fff;font-weight:600}
 #settings .cancel{background:var(--panel2);color:var(--dim);border:1px solid var(--line)!important}
 #settings .note{color:var(--dim);font-size:11px;margin-top:10px}
-#ai-cfg{display:flex;gap:6px;align-items:center}
-#ai-cfg select{flex:0 0 118px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--text);padding:8px 10px;font-size:13px;outline:none}
+#set-apikey{font-family:var(--mono);font-size:14px;letter-spacing:.4px;padding:12px 13px}
 #ai-cfg input{flex:1;min-width:0}
 #settings .req{color:var(--err);font-weight:600}
 #set-apikey.req{border-color:var(--err)!important;box-shadow:0 0 0 3px rgba(255,107,107,.12)}
@@ -57,10 +60,14 @@ body{background:var(--bg);color:var(--text);font:14px/1.6 -apple-system,"PingFan
 .badge{padding:1px 8px;border-radius:10px;font-size:11px}
 .badge.ok{background:rgba(77,216,138,.15);color:var(--ok)}
 .badge.no{background:rgba(255,107,107,.15);color:var(--err)}
+.badge.err{background:rgba(255,107,107,.28);color:var(--err);font-weight:600}
+.cfgstate{font-size:11px;margin-top:3px;color:var(--dim)}
+.cfgstate.ok{color:var(--ok)}
+.cfgstate.err{color:var(--err)}
+.cfgstate.warn{color:var(--warn)}
 .status-card a.act{display:block;text-align:center;margin-top:6px;padding:6px;border:1px solid var(--accent);
   border-radius:6px;color:var(--accent2);text-decoration:none;font-size:12px}
 .status-card a.act:hover{background:rgba(77,163,255,.12)}
-.status-card.need-act{box-shadow:0 0 0 2px var(--err);border-color:var(--err)}
 
 /* 模板列表 */
 .gensel{width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--text);
@@ -157,20 +164,15 @@ body{background:var(--bg);color:var(--text);font:14px/1.6 -apple-system,"PingFan
 code.tsj{color:var(--accent)!important;cursor:pointer}
 code.tsj:hover{background:rgba(77,163,255,.3);border-color:var(--accent)!important}
 pre.raw{font-family:var(--mono);font-size:12.5px;white-space:pre-wrap;word-break:break-all;color:var(--text)}
-
-/* ---------- 网页版登录门（托管模式未登录时显示；本地直连版不触发） ---------- */
-#loginGate{position:fixed;inset:0;background:rgba(8,10,14,.72);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;z-index:99}
-#loginGate[hidden]{display:none}
-#loginGate .lg-card{width:360px;max-width:92vw;background:linear-gradient(180deg,#1a2230,#141a23);border:1px solid var(--line);border-radius:18px;padding:36px 30px;text-align:center;box-shadow:0 24px 60px rgba(0,0,0,.55)}
-.lg-logo{font-size:42px;line-height:1;margin-bottom:10px;background:linear-gradient(135deg,#4da3ff,#7ec8ff);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
-.lg-title{font-size:22px;font-weight:700;letter-spacing:.5px}
-.lg-desc{color:var(--dim);font-size:13px;margin:6px 0 26px}
-#lg-code{width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:10px;color:var(--text);padding:12px;font:16px/1.4 ui-monospace,monospace;text-align:center;letter-spacing:1px;outline:none;transition:.15s}
-#lg-code:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(77,163,255,.15)}
-#lg-go{width:100%;margin-top:12px;padding:12px;border:none;border-radius:10px;background:linear-gradient(135deg,#2b6cb0,#3182ce);color:#fff;font-size:15px;font-weight:600;cursor:pointer;transition:.15s}
-#lg-go:hover{filter:brightness(1.1)}
-#lg-err{color:var(--err);font-size:12px;min-height:18px;margin-top:10px}
-.lg-foot{color:var(--dim);font-size:11px;margin-top:18px;opacity:.7}
+/* 设置面板：SESSDATA 获取教程（默认收起） */
+details.guide{margin-top:8px;border:1px dashed var(--line);border-radius:8px;padding:6px 10px}
+details.guide summary{color:var(--accent2);font-size:12px;cursor:pointer;user-select:none}
+details.guide summary:hover{color:var(--accent)}
+details.guide[open] summary{margin-bottom:4px}
+#upd{display:flex;gap:10px;align-items:center;margin:8px 2px 0;padding:7px 10px;
+  border:1px solid #6b5a1e;border-radius:9px;background:rgba(255,193,7,.08);
+  font-size:12px;color:#ffd666}
+#upd a{color:#ffd666;font-weight:600;text-decoration:none}
 </style>
 </head>
 <body>
@@ -178,9 +180,10 @@ pre.raw{font-family:var(--mono);font-size:12.5px;white-space:pre-wrap;word-break
 
   <!-- 左：操作区 -->
   <div class="col" id="left">
-    <div class="brand"><span class="dot"></span>BiliParser 工作台
+    <div class="brand"><span class="dot"></span><a href="#" id="brand-link" title="打开官网">BiliParser 工作台</a>
       <button class="gear" id="gear" title="设置">⚙</button>
     </div>
+    <div id="upd" style="display:none"><span id="upd-t"></span><a href="#" id="upd-go">去下载 ↗</a></div>
     <div class="pane">
       <div class="sec-title">生成类型</div>
       <select id="gen-type" class="gensel"></select>
@@ -233,47 +236,35 @@ pre.raw{font-family:var(--mono);font-size:12.5px;white-space:pre-wrap;word-break
 
 </div>
 
-<!-- 网页版激活门：托管模式未登录时显示 -->
-<div id="loginGate" hidden>
-  <div class="lg-card">
-    <div class="lg-logo">✦</div>
-    <div class="lg-title">BiliParser</div>
-    <div class="lg-desc">B 站视频 · AI 智能总结</div>
-    <input id="lg-code" placeholder="输入激活码" spellcheck="false" autocomplete="off">
-    <button id="lg-go">立即激活</button>
-    <div id="lg-err"></div>
-    <div class="lg-foot">激活码由卖家提供 · 一码通用</div>
-  </div>
-</div>
-
 <!-- 设置面板 -->
 <div id="settings">
   <div class="card">
     <h3>设置</h3>
-    <div class="sub">配置保存在 <span id="cfgpath"></span></div>
 
-    <label>AI 提供商 + API Key（可选：不填用服务器免费模型）</label>
-    <div id="ai-cfg">
-      <select id="set-provider">
-        <option value="server">服务器模型（默认·免费）</option>
-        <option value="zhipu">智谱 GLM（自有 Key）</option>
-        <option value="deepseek">DeepSeek（自有 Key）</option>
-      </select>
-      <input id="set-apikey" placeholder="API Key（选了自有提供商才需要）" spellcheck="false">
+    <div class="sect" id="ai-block">
+      <label>AI API Key</label>
+      <input id="set-apikey" placeholder="必填 · 粘贴 Key 自动识别智谱 / DeepSeek · 费用自付" spellcheck="false">
+      <div class="cfgstate" id="set-apikey-state"></div>
     </div>
 
-    <label>B 站 SESSDATA（可选，填了能解锁 AI 字幕）</label>
-    <input id="set-sessdata" placeholder="粘贴 SESSDATA" spellcheck="false">
-    <div class="note"><b>获取 SESSDATA：</b><br>
-      1. 电脑浏览器登录 bilibili.com，打开任意一个视频<br>
-      2. 按 <b>F12</b>（或右键 → 检查）打开开发者工具<br>
-      3. 点顶部「<b>应用程序</b>」标签（英文 Application）<br>
-      4. 左侧「存储」下展开「<b>Cookie</b>」，点 <b>bilibili.com</b><br>
-      5. 右侧列表找到「<b>SESSDATA</b>」这一行，双击它的「<b>值</b>」单元格全选<br>
-      6. 按 <b>Ctrl+C</b> 复制，回到这里 <b>Ctrl+V</b> 粘贴</div>
-    <a href="/static/sessdata-guide.png" target="_blank" title="点击看大图"><img src="/static/sessdata-guide.png" alt="SESSDATA 获取教程截图" style="width:100%;max-width:380px;border:1px solid var(--line);border-radius:8px;margin-top:8px;cursor:zoom-in;display:block"></a>
+    <div class="sect">
+      <label>B 站 SESSDATA</label>
+      <input id="set-sessdata" placeholder="必填 · 解锁 AI 字幕/总结 · 约一个月过期需更新" spellcheck="false">
+      <div class="cfgstate" id="set-sessdata-state"></div>
+      <details class="guide">
+        <summary>如何获取 SESSDATA？</summary>
+        <div class="note"><b>获取 SESSDATA：</b><br>
+        1. 电脑浏览器登录 bilibili.com，打开任意一个视频<br>
+        2. 按 <b>F12</b> 打开开发者工具<br>
+        3. 点顶部「<b>应用程序</b>」标签<br>
+        4. 左侧「存储」下展开「<b>Cookie</b>」，点 <b>bilibili.com</b><br>
+        5. 右侧列表找到「<b>SESSDATA</b>」这一行，双击它的「<b>值</b>」单元格全选<br>
+        6. 按 <b>Ctrl+C</b> 复制，回到这里 <b>Ctrl+V</b> 粘贴</div>
+        <a href="/static/sessdata-guide.png" target="_blank" title="点击看大图"><img src="/static/sessdata-guide.png" alt="SESSDATA 获取教程截图" style="width:100%;max-width:380px;border:1px solid var(--line);border-radius:8px;margin-top:8px;cursor:zoom-in;display:block"></a>
+      </details>
+    </div>
 
-    <div id="server-cfg" style="display:none">
+    <div id="server-cfg" class="sect" style="display:none">
       <label>授权服务器（留空 = 直连模式）</label>
       <input id="set-server" placeholder="https://lic.example.com" spellcheck="false">
     </div>
@@ -464,6 +455,11 @@ $('#gen-type').onchange=()=>{
   if($('#gen-type').value==='__create__'){ openEditor(null); renderTypeSelect(); }
 };
 $('#b-gen').onclick=guard(async()=>{
+  // 未激活点生成 → 直接去激活页（不激活不能用）
+  if(license && license.server && !license.activated){
+    location.href='/activate.html';
+    return;
+  }
   const v=$('#gen-type').value, w=ws(), page=w.video.page;
   const done=[], fail=[]; let needAct=false;
   // 1/3 字幕
@@ -500,11 +496,7 @@ $('#b-gen').onclick=guard(async()=>{
   showTab(w.tabs.summary?'summary':(w.tabs.subtitle?'subtitle':'meta'));
   if(fail.length) setState(`完成 ${done.join('、')||'无'}；失败 ${fail.join('、')}`,'err');
   else setState(`✓ 已生成：${done.join(' / ')}`);
-  if(needAct){
-    const sc=$('#status'); sc.classList.add('need-act');
-    toast('AI 总结需要激活：试用已到期或未授权，请点左下角「输码激活」');
-    setTimeout(()=>sc.classList.remove('need-act'),4000);
-  }
+  if(needAct){ location.href='/activate.html'; }   // 后端 403 未激活 → 去激活页
 });
 
 /* ---------- 自定义模板 ---------- */
@@ -615,109 +607,136 @@ $('#clear').onclick=()=>{
 };
 
 /* ---------- 配置状态 & 启动 ---------- */
+let statusData=null;
+function renderStatus(){
+  const d=statusData; if(!d) return;
+  const lic=license||{};
+  // 激活行常驻：发行版已激活/未激活（未激活附输码入口）；直连自用版免激活
+  let head;
+  if(!lic.server){ head='<div class="row"><span>激活</span><span class="badge ok">免激活</span></div>'; }
+  else if(lic.activated){ head='<div class="row"><span>激活</span><span class="badge ok">已激活</span></div>'; }
+  else{
+    head=`
+    <div class="row"><span>激活</span><span class="badge no">未激活</span></div>
+    <a class="act" href="/activate.html">输码激活 / 购买</a>`;
+  }
+  const sdBadge=d.sessdata_valid===false?'<span class="badge err">已失效</span>'
+    :(d.sessdata_valid===true?'<span class="badge ok">已生效</span>':(d.sessdata_configured?'<span class="badge ok">已配置</span>':'<span class="badge no">未配置</span>'));
+  const keyBadge=d.glm_key_configured
+    ?(d.api_key_valid===false?'<span class="badge err">未生效</span>':(d.api_key_valid===true?'<span class="badge ok">已生效</span>':'<span class="badge ok">已配置</span>'))
+    :'<span class="badge no">未配置</span>';
+  $('#status').innerHTML=`
+    ${head}
+    <div class="row"><span>SESSDATA</span>${sdBadge}</div>
+    <div class="row"><span>API Key</span>${keyBadge}</div>`;
+}
 async function loadStatus(){
-  try{
-    const d=await api('/api/status');
-    const lic=license||{};
-    let head='';
-    if(d.hosted){
-      // 网页版：激活码授权 + 买家自配 AI key
-      head=`
-      <div class="row"><span>授权</span><span class="badge ok">已激活</span></div>
-      <div class="row"><span>AI</span><span class="badge ok">${d.provider||'服务器免费模型'}</span></div>`;
-    }else if(lic.server){
-      // 桌面版发行模式：服务器代理 + 每日配额；未激活 → 试用（服务器记录首次时间）
-      const tr=lic.trial;
-      const u=lic.usage||(tr?{today_used:tr.today_used,daily_quota:tr.daily_quota}:null);
-      let auth,act='';
-      if(lic.activated){ auth=`<span class="badge ok">${lic.online?'已激活':'离线宽限'}</span>`; }
-      else if(tr&&tr.active){
-        const h=Math.max(1,Math.ceil(tr.remaining_seconds/3600));
-        auth=`<span class="badge ok">试用中 · 剩 ${h} 小时</span>`;
-        act=`<a class="act" href="/activate.html">输码激活 / 购买</a>`;
-      }
-      else if(tr){
-        auth=`<span class="badge no">试用已到期</span>`;
-        act=`<a class="act" href="/activate.html" style="color:var(--err);border-color:var(--err)">试用到期 · 输入激活码解锁 AI</a>`;
-      }
-      else{ auth=`<span class="badge no">未激活</span>`; act=`<a class="act" href="/activate.html">输码激活</a>`; }
-      head=`
-      <div class="row"><span>授权</span>${auth}</div>
-      ${u?`<div class="row"><span>今日 AI</span><b>${u.today_used}/${u.daily_quota}</b></div>`:''}
-      ${act}`;
-    }
-    $('#status').innerHTML=`
-      ${head}
-      <div class="row"><span>SESSDATA</span><span class="badge ${d.sessdata_configured?'ok':'no'}">${d.sessdata_configured?'已配置':'未配置'}</span></div>
-      ${(d.hosted||lic.server)?'':`<div class="row"><span>GLM Key</span><span class="badge ${d.glm_key_configured?'ok':'no'}">${d.glm_key_configured?'已配置':'未配置'}</span></div>`}`;
-  }catch(e){$('#status').textContent='状态获取失败：'+e.message}
+  try{ statusData=await api('/api/status'); }catch(e){ $('#status').textContent='状态获取失败：'+e.message; return; }
+  renderStatus();   // 先按配置有无渲染
+  // 再异步真实校验：失效 → 红色「已失效」（后端按值缓存，同值只联网测一次）
+  try{ Object.assign(statusData, await api('/api/config/validate')); renderStatus(); }catch(e){}
 }
 
 /* ---------- 激活门与设置 ---------- */
 async function loadLicense(){
   try{
     license=await api('/api/license/state');
-    return true;   // 暂不设激活门：未激活也不跳 activate.html（后续改试用模式）
-  }catch(e){ return true; }
+  }catch(e){ license={server:'',activated:false}; }
+  // 硬门：发行版未激活 → 启动直接进激活页（不激活不能用；激活成功后跳回工作台）
+  if(license.server && !license.activated){ location.replace('/activate.html'); return false; }
+  return true;
 }
+/* Key 半加密显示（中间打码）：展示前6+•••+后4，保存时未改动（仍等于打码串）不提交 */
+function maskKey(v){ v=v||''; return v.length>14 ? v.slice(0,6)+'••••••••'+v.slice(-4) : v }
+/* 与后端 _detect_provider 同规则：sk- → DeepSeek；id.secret → 智谱 */
+function detectKey(k){ k=(k||'').trim(); if(/^sk-/.test(k)) return 'deepseek';
+  if(/^[0-9A-Za-z]{8,}\./.test(k)) return 'zhipu'; return null }
+/* 输入时实时识别提供商，结果显示在 Key 下方唯一的状态行里 */
+$('#set-apikey').addEventListener('input',()=>{
+  const k=$('#set-apikey').value.trim(), el=$('#set-apikey-state'), p=detectKey(k);
+  if(!k){ el.innerHTML='<div class="cfgstate err">必填 —— 粘贴智谱 / DeepSeek 的 API Key</div>'; }
+  else if(p==='deepseek'){ el.innerHTML='<div class="cfgstate ok">✓ 将识别为 DeepSeek，保存时校验</div>'; }
+  else if(p==='zhipu'){ el.innerHTML='<div class="cfgstate ok">✓ 将识别为 智谱 GLM，保存时校验</div>'; }
+  else{ el.innerHTML='<div class="cfgstate warn">未能识别格式，将按智谱处理，可先保存试校验</div>'; }
+});
+/* 品牌名点击 → 官网（fetch 让后端调系统浏览器打开，app 窗口不跳转） */
+$('#brand-link').onclick=e=>{
+  e.preventDefault();
+  fetch('/open-official').catch(()=>{});
+};
 $('#gear').onclick=async()=>{
-  try{
-    const d=await api('/api/config/get');
-    $('#cfgpath').textContent=d.config_path;
-    $('#set-sessdata').value=d.sessdata_configured?'（已配置，留空保持不变）':'';
-    $('#set-sessdata').dataset.configured=d.sessdata_configured?'1':'';
+  let d=null;
+  try{ d=await api('/api/config/get'); }catch(e){}
+  if(d){
+    // 显示已配置的真实值：SESSDATA 原文；API Key 半加密（中间打码）
+    $('#set-sessdata').value=d.sessdata_value||'';
+    $('#set-sessdata').dataset.v=d.sessdata_value||'';
     $('#set-server').value=d.managed_server||'';
-    $('#set-provider').value=d.provider||'server';
-    $('#set-apikey').value=d.api_key_configured?'（已配置，留空保持不变）':'';
-  }catch(e){}
-  syncProviderUI();
-  // AI 提供商配置对所有版本可见（服务器模型=默认免配置）
+    $('#set-apikey').value=maskKey(d.api_key_value||'');
+    $('#set-apikey').dataset.v=d.api_key_value||'';
+    $('#set-sessdata-state').innerHTML=sessdataStateHtml(d);
+    $('#set-apikey-state').innerHTML=apikeyStateHtml(d);
+  }
   $('#settings').classList.add('show');
 };
-function syncProviderUI(){
-  const p=$('#set-provider').value;
-  const needKey = (p==='zhipu' || p==='deepseek');
-  $('#set-apikey').disabled = !needKey;
-  if(needKey){ $('#set-apikey').placeholder='API Key（选了自有提供商才需要）'; }
-  else { $('#set-apikey').placeholder='用服务器免费模型，无需填 key'; $('#set-apikey').value=''; }
+function sessdataStateHtml(d){
+  if(!d.sessdata_configured) return '<div class="cfgstate err">未配置 —— 必填，否则无法生成字幕/总结</div>';
+  if(d.sessdata_valid===false) return '<div class="cfgstate err">已失效 —— 请粘贴浏览器里最新的 SESSDATA 后保存</div>';
+  if(d.sessdata_valid===true) return '<div class="cfgstate ok">已配置且已生效（有效期约一个月）</div>';
+  return '<div class="cfgstate">已配置 —— 保存时会自动校验是否失效</div>';
 }
-$('#set-provider').onchange=syncProviderUI;
+function apikeyStateHtml(d){
+  const prov=d.provider_label?`（${d.provider_label}）`:'';
+  if(!d.glm_key_configured) return '<div class="cfgstate err">未配置 —— 必填，否则无法生成总结</div>';
+  if(d.api_key_valid===false) return '<div class="cfgstate err">Key 未生效'+prov+' —— 无效或余额不足，请更换 / 充值后重新保存</div>';
+  if(d.api_key_valid===true) return '<div class="cfgstate ok">Key 已生效'+prov+'</div>';
+  return '<div class="cfgstate">已配置'+prov+' —— 保存时会自动校验是否有效</div>';
+}
 $('#set-save').onclick=async()=>{
   const body={};
   const sd=$('#set-sessdata').value.trim();
-  if(sd && !sd.startsWith('（')) body.sessdata=sd;   // 占位提示文字不提交
+  if(sd!==($('#set-sessdata').dataset.v||'')) body.sessdata=sd;   // 改了才提交；清空=删除
   const sv=$('#set-server').value.trim();
   if(sv!==($('#set-server').defaultValue)) body.managed_server=sv;
-  const prov=$('#set-provider').value;
-  if(prov) body.provider=prov;
   const ak=$('#set-apikey').value.trim();
-  if(ak && !ak.startsWith('（')) body.api_key=ak;   // 占位提示文字不提交
+  if(ak!==maskKey($('#set-apikey').dataset.v||'')) body.api_key=ak;  // 等于打码串=未改动；清空=删除
   if(!Object.keys(body).length){ $('#settings').classList.remove('show'); return toast('没有改动'); }
+  const btn=$('#set-save'), orig=btn.textContent;
+  btn.disabled=true; btn.textContent='保存并校验中…';
   try{
-    await api('/api/config/save',body);
+    const r=await api('/api/config/save',body);
     $('#settings').classList.remove('show');
-    await loadLicense(); await loadStatus(); toast('已保存');
+    await loadLicense(); await loadStatus();
+    if(r&&r.sessdata_valid===false){
+      setState('已保存，但 SESSDATA 已失效，不会生效！请更新为浏览器里最新的 SESSDATA','err');
+      setTimeout(()=>{ if($('#state').textContent.includes('已失效')) setState('') },4000);
+    }else if(r&&r.api_key_valid===false){
+      toast('已保存，但 API Key 校验失败（无效），不会生效');
+    }else if(r&&r.sessdata_valid===true&&r.api_key_valid===true){ toast('已保存（SESSDATA 与 Key 均已生效）'); }
+    else if(r&&r.sessdata_valid===true){ toast('已保存（SESSDATA 已生效）'); }
+    else if(r&&r.sessdata_valid===null&&r.api_key_valid!==false){ toast('已保存（未能联网验证）'); }
+    else toast('已保存');
   }catch(e){ toast(String(e.message||e)); }
+  finally{ btn.disabled=false; btn.textContent=orig; }
 };
 function refreshButtons(forceDisable){
   $('#b-gen').disabled=!(ws()&&!forceDisable);
 }
-/* 启动：托管网页版未登录 → 登录浮层（本地直连版 /api/status 恒 200，不触发） */
+/* 启动：读本地凭证校验（不联网）；未激活不设硬门，点关键按钮时提示去激活 */
 (async()=>{
-  let r; try{ r=await fetch('/api/status'); }catch(e){ r=null; }
-  if(r && r.status===401){ $('#loginGate').hidden=false; $('#lg-code').focus(); return; }
-  const ok=await loadLicense(); if(ok){ loadStatus(); }   // 激活门：managed 未激活会跳激活页
+  await loadLicense();
+  loadStatus();
+  // 新版本提示（服务器挂了就静默，绝不打扰）
+  fetch('/api/update-check').then(r=>r.json()).then(d=>{
+    if(d&&d.update_available){
+      $('#upd-t').textContent='新版本 '+d.latest+' 可用，建议更新';
+      $('#upd').style.display='flex';
+    }
+  }).catch(()=>{});
+  $('#upd-go').onclick=e=>{e.preventDefault();fetch('/open-official').catch(()=>{});};
   // 激活后自动打开设置面板，引导配置 AI 提供商 + Key
   if(new URLSearchParams(location.search).has('config')){ $('#gear').click(); }
 })();
-async function loginGo(){
-  const code=$('#lg-code').value.trim(); if(!code)return;
-  $('#lg-err').textContent='激活中…';
-  try{ await api('/api/login',{code}); location.href='/?config=1'; }
-  catch(e){ $('#lg-err').textContent=String(e.message||e).split('\n')[0]; }
-}
-$('#lg-go').onclick=loginGo;
-$('#lg-code').addEventListener('keydown',e=>{ if(e.key==='Enter')loginGo(); });
 loadPrompts().then(()=>{renderPlist();renderTypeSelect();}); renderTabbar();
 </script>
 </body>

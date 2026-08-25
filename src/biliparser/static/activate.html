@@ -36,25 +36,30 @@ button:disabled{opacity:.5}
   <div class="sub">首次使用请输入激活码（一码一机，绑定当前设备）</div>
 
   <label>激活码</label>
-  <input id="code" class="code" placeholder="BP-XXXX-XXXX-XXXX-XXXX" spellcheck="false" maxlength="24">
+  <input id="code" class="code" placeholder="XXXX-XXXX-XXXX-XXXX" spellcheck="false" maxlength="19">
 
   <button id="go" onclick="doActivate()">激 活</button>
   <div class="msg" id="msg"></div>
 
-  <div class="fp" id="fp"></div>
   <div class="hint">激活遇到问题？联系卖家核对激活码或解绑旧设备</div>
 </div>
 <script>
 const $ = s => document.querySelector(s);
 fetch('/api/license/state').then(r=>r.json()).then(s=>{
-  $('#fp').textContent = '本机指纹：' + s.fingerprint;
   if(s.activated){ location.href='/'; }  // 已激活被误跳转进来 → 回主页
 }).catch(()=>{});
+// 输入预处理：只留数字字母并转大写，每 4 位自动补 -
+// （手打或粘贴裸码都能变回标准 XXXX-XXXX-XXXX-XXXX；服务器同样会兜底）
+$('#code').addEventListener('input', e=>{
+  const v = e.target.value.toUpperCase().replace(/[^0-9A-Z]/g,'');
+  e.target.value = (v.match(/.{1,4}/g)||[]).slice(0,4).join('-');
+});
 $('#code').addEventListener('keydown', e=>{ if(e.key==='Enter') doActivate(); });
 
 async function doActivate(){
   const code=$('#code').value.trim();
   const msg=$('#msg'); msg.className='msg'; msg.textContent='';
+  $('#code').style.borderColor='';
   if(!code){ msg.className='msg err'; msg.textContent='请输入激活码'; return; }
   $('#go').disabled=true; msg.className='msg ok'; msg.textContent='激活中…';
   try{
@@ -67,6 +72,7 @@ async function doActivate(){
     setTimeout(()=>location.href='/', 600);
   }catch(e){
     msg.className='msg err'; msg.textContent=String(e.message||e);
+    if(String(e.message||e).includes('无效')) $('#code').style.borderColor='var(--err)';  // 输入框标红
     $('#go').disabled=false;
   }
 }

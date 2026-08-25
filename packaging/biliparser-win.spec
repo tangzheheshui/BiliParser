@@ -14,14 +14,18 @@ from pathlib import Path
 
 ROOT = Path(SPECPATH).parent
 STATIC = ROOT / "src" / "biliparser" / "static"
-# 发行版：build-windows.sh 传入授权服务器地址时，会生成 packaging/_dist_server.txt，
-# 烧进包内 → 用户拿到即要求激活；不带参数构建 = 自用直连版
+# 发行版：build-windows.sh 传入授权服务器地址/签名密钥时，会生成 packaging/_dist_server.txt
+# 与 packaging/_sign_key.txt，烧进包内 → 用户拿到即要求激活（密钥须与服务器一致，
+# 客户端靠它本地验签）；不带参数构建 = 自用直连版
 DIST_SERVER_FILE = ROOT / "packaging" / "_dist_server.txt"
+SIGN_KEY_FILE = ROOT / "packaging" / "_sign_key.txt"
 ICON_FILE = ROOT / "packaging" / "biliparser.ico"
 
 datas = [(str(STATIC), "biliparser/static")]
 if DIST_SERVER_FILE.exists():
     datas.append((str(DIST_SERVER_FILE), "biliparser"))
+if SIGN_KEY_FILE.exists():
+    datas.append((str(SIGN_KEY_FILE), "biliparser"))
 
 exe_kwargs = {}
 if ICON_FILE.exists():

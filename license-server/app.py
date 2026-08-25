@@ -1,535 +1,476 @@
-"""BiliParser 授权服务器：激活码绑定/验证 + AI 调用代理（配额限流）+ 管理后台。
+"""BiliParser 授权服务器：激活码库存管理 + 一次性激活鉴权。
 
-对外 3 个 API（客户端用）：
-  POST /api/activate  {code, fingerprint}        → 绑定设备，发 token
-  POST /api/verify    {token}                    → 启动验证（含 72h 宽限期下发）
-  POST /api/ai/chat   Bearer token, OpenAI 格式   → 配额检查后转发 GLM
-  GET  /api/quota     Bearer token               → 今日用量（客户端状态卡）
+按 docs/requirements/服务器需求文档.md v2.2 实现（Flask + SQLite，框架沿用旧版）：
+- POST /api/v1/license/activate        客户端激活（匿名，每 IP 每分钟 60 次限流）
+- POST /api/v1/admin/login             管理员登录（ADMIN_PASSWORD → 7 天 Token）
+- POST /api/v1/admin/codes/take        取码发货（FIFO，原子，自动补货）
+- POST /api/v1/admin/codes/{sn}/return 退回（仅已发货未激活）
+- GET  /api/v1/admin/codes             激活码列表（三态筛选 / 分页 / 库存余量）
+- GET  /admin                          单页管理后台
 
-管理后台（ADMIN_KEY 保护）：/admin 生成/列表/禁用/解绑/配额。
-
-密钥全部走环境变量：SERVER_SECRET / ADMIN_KEY / GLM_API_KEY /
-GLM_BASE_URL / GLM_MODEL / LICENSE_DB。部署见 docs/deploy.md。
+约定：所有业务响应 HTTP 状态码统一 200，业务结果放 body.code。
+激活后客户端永久离线（本地 HMAC 验签），服务器不具备远程吊销能力（有意取舍）。
 """
 
-import base64
 import hashlib
 import hmac
+import logging
 import os
+import re
 import secrets
 import sqlite3
+import threading
 import time
-from datetime import datetime, timedelta, timezone
+from collections import defaultdict, deque
+from datetime import datetime, timedelta
+from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 
-import httpx
-from flask import Flask, g, jsonify, redirect, render_template, request
+from flask import Flask, jsonify, redirect, request, send_file, send_from_directory
 
 from db import connect
 
-def _utcnow() -> datetime:
-    """utcnow() 在 3.12+ 已弃用，统一走这里（仍返回 naive UTC，与库内字符串比较一致）。"""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+# ---------------- 常量与环境 ----------------
+
+SN_CHARSET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ"  # 剔除 0/O/1/I/L 易混淆字符
+ADMIN_TOKEN_DAYS = 7        # 管理登录有效期（FR-42：≥ 7 天）
+ACTIVATE_RATE_LIMIT = 60    # 每 IP 每分钟（NFR-03）
+ACTIVATE_RATE_WINDOW = 60
+
+HERE = Path(__file__).parent
 
 
-TOKEN_TTL_DAYS = 365       # token 自身有效期（真正吊销靠数据库 is_active）
-GRACE_HOURS = 72           # 客户端离线宽限期
-TRIAL_HOURS = int(os.environ.get("TRIAL_HOURS", "72"))          # 试用时长（从首次登记起算）
-TRIAL_DAILY_QUOTA = int(os.environ.get("TRIAL_DAILY_QUOTA", "10"))  # 试用期每日 AI 限额
-
-
-# ---------------- token（HMAC 签名，无状态但可查库吊销） ----------------
-
-def _b64(raw: bytes) -> str:
-    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
-
-
-def _unb64(text: str) -> bytes:
-    return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
-
-
-def issue_token(secret: str, license_id: int, fingerprint: str, exp_ts: int) -> str:
-    payload = f"{license_id}:{fingerprint}:{exp_ts}".encode()
-    sig = hmac.new(secret.encode(), payload, hashlib.sha256).digest()
-    return f"{_b64(payload)}.{_b64(sig)}"
-
-
-def parse_token(secret: str, token: str) -> tuple[int, str, int] | None:
-    """验签拆包：license_id, fingerprint, exp_ts；任何异常返回 None。"""
+def _env_int(name: str, default: int) -> int:
     try:
-        payload_b64, sig_b64 = token.split(".")
-        payload = _unb64(payload_b64)
-        expect = hmac.new(secret.encode(), payload, hashlib.sha256).digest()
-        if not hmac.compare_digest(expect, _unb64(sig_b64)):
-            return None
-        license_id, fingerprint, exp_ts = payload.decode().rsplit(":", 2)
-        return int(license_id), fingerprint, int(exp_ts)
-    except (ValueError, TypeError):
+        return int(os.environ.get(name, "") or default)
+    except ValueError:
+        return default
+
+
+def _setup_logger() -> logging.Logger:
+    """业务日志：每周轮转、保留 4 个备份；绝不打密钥。"""
+    logger = logging.getLogger("license")
+    if logger.handlers:
+        return logger
+    logger.setLevel(logging.INFO)
+    path = Path(os.environ.get("APP_LOG", HERE / "logs" / "app.log"))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handler = TimedRotatingFileHandler(path, when="D", interval=7, backupCount=4)
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    logger.addHandler(handler)
+    return logger
+
+
+log = _setup_logger()
+
+
+def _now() -> str:
+    """统一本地时间格式（进 HMAC，客户端原样回传，两边必须一字不差）。"""
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def normalize_mac(raw: str) -> str | None:
+    """MAC 规范化（FR-02）：忽略大小写与 : / - 分隔符，统一去分隔符大写。
+
+    非 12 位十六进制 → None（视为参数错误）。
+    """
+    if not raw:
         return None
-
-
-# ---------------- trial token（试用会话，payload 前缀 TRIAL: 区分） ----------------
-
-def issue_trial_token(secret: str, fingerprint: str, exp_ts: int) -> str:
-    payload = f"TRIAL:{fingerprint}:{exp_ts}".encode()
-    sig = hmac.new(secret.encode(), payload, hashlib.sha256).digest()
-    return f"{_b64(payload)}.{_b64(sig)}"
-
-
-def parse_trial_token(secret: str, token: str) -> tuple[str, int] | None:
-    """验签拆包 trial token：(fingerprint, exp_ts)。正式 token 因 rsplit 出 3 段返回 None。"""
-    try:
-        payload_b64, sig_b64 = token.split(".")
-        payload = _unb64(payload_b64)
-        expect = hmac.new(secret.encode(), payload, hashlib.sha256).digest()
-        if not hmac.compare_digest(expect, _unb64(sig_b64)):
-            return None
-        head, fingerprint, exp_ts = payload.decode().rsplit(":", 2)
-        if head != "TRIAL":
-            return None
-        return fingerprint, int(exp_ts)
-    except (ValueError, TypeError):
+    norm = re.sub(r"[^0-9A-Fa-f]", "", str(raw)).upper()
+    if len(norm) != 12:
         return None
+    return norm
+
+
+def normalize_sn(raw: str) -> str:
+    """激活码规范化（FR-03）：忽略大小写与首尾空格，库内统一大写。
+
+    容错：没带分隔符的 16 位裸码自动补回 XXXX-XXXX-XXXX-XXXX——
+    0.2.1 客户端激活页曾把 - 当垃圾字符实时删掉，输码全线失败，服务端兜底。
+    """
+    s = str(raw or "").strip().upper()
+    compact = re.sub(r"[^0-9A-Z]", "", s)
+    if "-" not in s and len(compact) == 16:
+        return "-".join(compact[i:i + 4] for i in range(0, 16, 4))
+    return s
+
+
+def gen_sn(conn: sqlite3.Connection) -> str:
+    """生成 XXXX-XXXX-XXXX-XXXX（FR-13）：secrets 随机 + 入库前查重。"""
+    while True:
+        sn = "-".join("".join(secrets.choice(SN_CHARSET) for _ in range(4))
+                      for _ in range(4))
+        if not conn.execute("SELECT 1 FROM license_codes WHERE sn=?", (sn,)).fetchone():
+            return sn
+
+
+def sign_token(key: str, sn: str, mac: str, activated_at: str) -> str:
+    """FR-04：token = HMAC-SHA256(secret, sn|mac_normalized|activated_at)。"""
+    msg = f"{sn}|{mac}|{activated_at}".encode()
+    return hmac.new(key.encode(), msg, hashlib.sha256).hexdigest()
 
 
 # ---------------- 应用工厂 ----------------
 
-def create_app(
-    db_path: str | None = None,
-    server_secret: str | None = None,
-    admin_key: str | None = None,
-    glm_api_key: str | None = None,
-    glm_base_url: str | None = None,
-    glm_model: str | None = None,
-) -> Flask:
-    here = Path(__file__).resolve().parent
+def create_app(db_path: str | None = None,
+               admin_password: str | None = None,
+               sign_key: str | None = None,
+               restock_threshold: int | None = None,
+               restock_target: int | None = None) -> Flask:
     app = Flask(__name__)
-    app.config.update(
-        DB_PATH=db_path or os.environ.get("LICENSE_DB", "licenses.db"),
-        SERVER_SECRET=server_secret or os.environ.get("SERVER_SECRET", "dev-secret-change-me"),
-        ADMIN_KEY=admin_key or os.environ.get("ADMIN_KEY", "dev-admin"),
-        GLM_API_KEY=glm_api_key or os.environ.get("GLM_API_KEY", ""),
-        GLM_BASE_URL=glm_base_url or os.environ.get("GLM_BASE_URL", "https://open.bigmodel.cn/api/paas/v4/"),
-        GLM_MODEL=glm_model or os.environ.get("GLM_MODEL", "glm-4-flash"),
-        SITE_DIR=str(here / "static-site"),      # 官网下载页
-        DOWNLOADS_DIR=os.environ.get("DOWNLOADS_DIR", str(here / "downloads")),  # 安装包目录
-    )
+
+    app.config["DB_PATH"] = db_path or os.environ.get("LICENSE_DB", str(HERE / "licenses.db"))
+    app.config["ADMIN_PASSWORD"] = admin_password if admin_password is not None \
+        else os.environ.get("ADMIN_PASSWORD", "")
+    app.config["SIGN_KEY"] = sign_key if sign_key is not None \
+        else os.environ.get("LICENSE_SIGN_KEY", "")
+    app.config["RESTOCK_THRESHOLD"] = restock_threshold \
+        if restock_threshold is not None else _env_int("RESTOCK_THRESHOLD", 10)
+    app.config["RESTOCK_TARGET"] = restock_target \
+        if restock_target is not None else _env_int("RESTOCK_TARGET", 50)
+    if not app.config["SIGN_KEY"]:
+        # 开发默认值（生产必须设 LICENSE_SIGN_KEY，见部署文档；缺省时记录告警）
+        app.config["SIGN_KEY"] = "dev-sign-key-change-me"
+        log.warning("LICENSE_SIGN_KEY 未配置，使用开发默认值（生产环境必须配置）")
+
+    _db_local = threading.local()
 
     def db() -> sqlite3.Connection:
-        if "db" not in g:
-            g.db = connect(app.config["DB_PATH"])
-        return g.db
+        conn = getattr(_db_local, "conn", None)
+        if conn is None:
+            conn = connect(app.config["DB_PATH"])
+            _db_local.conn = conn
+        return conn
 
-    app.teardown_appcontext(lambda e: g.pop("db", None).close() if "db" in g else None)
+    _db_lock = threading.Lock()          # 取码 / 补货的原子性（NFR-07）
+    _rate: dict[str, deque] = defaultdict(deque)
 
-    def err(message: str, status: int, hint: str | None = None):
-        return jsonify({"error": message, "hint": hint}), status
+    # ---------- 激活码生成 / 补货 ----------
 
-    # ---------------- 业务校验 ----------------
-
-    def _license_state(row) -> tuple[bool, str]:
-        """激活码当前可用性：is_active + expires_at。"""
-        if row is None:
-            return False, "激活码无效"
-        if not row["is_active"]:
-            return False, "激活码已被禁用"
-        if row["expires_at"] and row["expires_at"] <= _utcnow().isoformat():
-            return False, "激活码已过期"
-        return True, ""
-
-    def _check_token(token: str) -> tuple[sqlite3.Row | None, str]:
-        """token 验签 + 数据库实时状态（支持远程吊销）。返回 (row, 错误消息)。"""
-        if not token:
-            return None, "缺少凭证"
-        parsed = parse_token(app.config["SERVER_SECRET"], token)
-        if not parsed:
-            return None, "凭证无效"
-        license_id, fingerprint, exp_ts = parsed
-        if exp_ts < int(_utcnow().timestamp()):
-            return None, "凭证已过期，请重新激活"
-        row = db().execute("SELECT * FROM licenses WHERE id=?", (license_id,)).fetchone()
-        ok, reason = _license_state(row)
-        if not ok:
-            return None, reason
-        if fingerprint != "WEB" and row["device_fingerprint"] != fingerprint:
-            # WEB = 网页版会话 token：一码通用（桌面+网页），不占设备位
-            return None, "设备已解绑，请重新激活"
-        return row, ""
-
-    def _issue(row) -> str:
-        exp_ts = int((_utcnow() + timedelta(days=TOKEN_TTL_DAYS)).timestamp())
-        return issue_token(app.config["SERVER_SECRET"], row["id"], row["device_fingerprint"], exp_ts)
-
-    def _trial_state_row(row) -> dict:
-        """试用记录 → 状态 dict（active 按 first_seen_at + TRIAL_HOURS 判定）。"""
-        first = datetime.fromisoformat(row["first_seen_at"])
-        ends = first + timedelta(hours=TRIAL_HOURS)
-        now = _utcnow()
-        active = now < ends
-        return {
-            "active": active,
-            "expires_at": ends.isoformat(),
-            "remaining_seconds": max(0, int((ends - now).total_seconds())) if active else 0,
-            "daily_quota": row["daily_quota"],
-        }
-
-    def _check_trial(token: str) -> tuple[sqlite3.Row | None, str]:
-        """trial token 验签 + 数据库实时状态。返回 (trials 行, 错误消息)。"""
-        if not token:
-            return None, "缺少凭证"
-        parsed = parse_trial_token(app.config["SERVER_SECRET"], token)
-        if not parsed:
-            return None, "凭证无效"
-        fingerprint, exp_ts = parsed
-        if exp_ts < int(_utcnow().timestamp()):
-            return None, "凭证已过期，请重新激活"
-        row = db().execute("SELECT * FROM trials WHERE fingerprint=?", (fingerprint,)).fetchone()
-        if row is None:
-            return None, "试用登记不存在，请重新登记"
-        if not _trial_state_row(row)["active"]:
-            return None, "试用已到期，请激活后继续使用"
-        return row, ""
-
-    def _trial_usage(row) -> dict:
-        today = datetime.now().strftime("%Y-%m-%d")
-        u = db().execute(
-            "SELECT count FROM trial_usage WHERE fingerprint=? AND day=?",
-            (row["fingerprint"], today),
-        ).fetchone()
-        return {"today_used": (u["count"] if u else 0), "daily_quota": row["daily_quota"]}
-
-    def _usage(row) -> dict:
-        today = datetime.now().strftime("%Y-%m-%d")
-        u = db().execute(
-            "SELECT count FROM usage WHERE license_id=? AND day=?", (row["id"], today)
-        ).fetchone()
-        return {"today_used": (u["count"] if u else 0), "daily_quota": row["daily_quota"]}
-
-    # ---------------- 客户端 API ----------------
-
-    @app.post("/api/activate")
-    def activate():
-        data = request.get_json(silent=True) or {}
-        code = str(data.get("code") or "").strip()
-        fingerprint = str(data.get("fingerprint") or "").strip()
-        if not code or not fingerprint:
-            return err("code 和 fingerprint 必填", 400)
-        row = db().execute("SELECT * FROM licenses WHERE code=?", (code,)).fetchone()
-        ok, reason = _license_state(row)
-        if not ok:
-            return err(reason, 403, hint="请确认激活码输入无误，或联系卖家")
-        if row["device_fingerprint"] and row["device_fingerprint"] != fingerprint:
-            return err(
-                "该激活码已绑定其他设备（一码一机）",
-                403,
-                hint="换机请联系卖家在管理后台解绑，再重新激活",
-            )
-        if not row["device_fingerprint"]:  # 首次激活
-            db().execute(
-                "UPDATE licenses SET device_fingerprint=?, activated_at=? WHERE id=?",
-                (fingerprint, _utcnow().isoformat(), row["id"]),
-            )
-            db().commit()
-        exp_ts = int((_utcnow() + timedelta(days=TOKEN_TTL_DAYS)).timestamp())
-        token = issue_token(app.config["SERVER_SECRET"], row["id"], fingerprint, exp_ts)
-        return jsonify({
-            "success": True, "message": "激活成功",
-            "token": token,
-            "valid_until": (_utcnow() + timedelta(hours=GRACE_HOURS)).isoformat(),
-            "usage": {"today_used": 0, "daily_quota": row["daily_quota"]},
-        })
-
-    @app.post("/api/trial/register")
-    def trial_register():
-        """试用登记：设备指纹首次出现即开始计时（服务器 UTC + TRIAL_HOURS）。
-
-        幂等关键：first_seen_at 冲突时不覆盖——删本地文件/重装返回同一
-        `first_seen_at`，试用期不重置。到期仍返回状态（active=false），
-        不发 token，客户端据此引导激活。
-        """
-        data = request.get_json(silent=True) or {}
-        fingerprint = str(data.get("fingerprint") or "").strip()
-        if not fingerprint:
-            return err("fingerprint 必填", 400)
-        now = _utcnow().isoformat()
-        db().execute(
-            "INSERT INTO trials (fingerprint, first_seen_at, last_seen_at) VALUES (?,?,?) "
-            "ON CONFLICT(fingerprint) DO UPDATE SET last_seen_at=excluded.last_seen_at",
-            (fingerprint, now, now),
-        )
-        db().commit()
-        row = db().execute("SELECT * FROM trials WHERE fingerprint=?", (fingerprint,)).fetchone()
-        trial = _trial_state_row(row)
-        trial.update(_trial_usage(row))
-        resp = {"trial": trial}
-        if trial["active"]:
-            exp_ts = int((_utcnow() + timedelta(hours=TRIAL_HOURS)).timestamp())
-            resp["token"] = issue_trial_token(app.config["SERVER_SECRET"], fingerprint, exp_ts)
-        return jsonify(resp)
-
-    @app.post("/api/web/login")
-    def web_login():
-        """网页版登录：验码发 WEB 指纹 token。不绑定/不校验设备指纹——
-        一码通用（桌面版激活照常占设备位），配额按码共享。"""
-        data = request.get_json(silent=True) or {}
-        code = str(data.get("code") or "").strip()
-        if not code:
-            return err("请输入激活码", 400)
-        row = db().execute("SELECT * FROM licenses WHERE code=?", (code,)).fetchone()
-        ok, reason = _license_state(row)
-        if not ok:
-            return err(reason, 403, hint="请确认激活码输入无误，或联系卖家")
-        exp_ts = int((_utcnow() + timedelta(days=TOKEN_TTL_DAYS)).timestamp())
-        token = issue_token(app.config["SERVER_SECRET"], row["id"], "WEB", exp_ts)
-        return jsonify({
-            "success": True, "license_id": row["id"], "token": token,
-            "valid_until": (_utcnow() + timedelta(hours=GRACE_HOURS)).isoformat(),
-            "usage": _usage(row),
-        })
-
-    @app.post("/api/verify")
-    def verify():
-        data = request.get_json(silent=True) or {}
-        row, reason = _check_token(str(data.get("token") or ""))
-        if not row:
-            return jsonify({"valid": False, "message": reason})
-        return jsonify({
-            "valid": True,
-            "valid_until": (_utcnow() + timedelta(hours=GRACE_HOURS)).isoformat(),
-            "usage": _usage(row),
-        })
-
-    def _bearer() -> str:
-        auth = request.headers.get("Authorization", "")
-        return auth[7:] if auth.startswith("Bearer ") else ""
-
-    @app.get("/api/quota")
-    def quota():
-        row, reason = _check_token(_bearer())
-        if not row:
-            trow, treason = _check_trial(_bearer())
-            if not trow:
-                return err(treason, 403)
-            return jsonify(_trial_usage(trow))
-        return jsonify(_usage(row))
-
-    @app.post("/api/ai/chat")
-    def ai_chat():
-        body = request.get_json(silent=True) or {}
-        messages = body.get("messages")
-        if not isinstance(messages, list) or not messages:
-            return err("请求体需要 messages 数组", 400)
-
-        # 身份：正式 token 优先，其次是试用 token；都无效拒绝。
-        # 试用身份走 trial_usage 配额，正式走 usage 配额。
-        row, reason = _check_token(_bearer())
-        trial = None
-        if not row:
-            trow, treason = _check_trial(_bearer())
-            if not trow:
-                return err(treason, 403)
-            trial = trow
-
-        usage_now = _trial_usage(trial) if trial else _usage(row)
-        if usage_now["today_used"] >= usage_now["daily_quota"]:
-            return err(
-                f"今日 AI 调用已达上限（{usage_now['daily_quota']} 次/天）",
-                429,
-                hint="明天恢复，或联系卖家调高配额",
-            )
-
-        # 转发 GLM：模型由服务器统一指定，客户端传什么都不算数（成本可控）
-        if not app.config["GLM_API_KEY"]:
-            return err("服务器未配置 GLM_API_KEY", 500)
-        # 免费模型高峰期偶发 429「访问量过大」，重试吞掉瞬时限流
-        resp = None
-        for attempt in range(3):
+    def _restock(force: bool = False) -> int:
+        """补货到目标值，返回新生成数量。force=True 用于空库首启。"""
+        with _db_lock:
+            conn = db()
+            conn.execute("BEGIN IMMEDIATE")
             try:
-                resp = httpx.post(
-                    app.config["GLM_BASE_URL"].rstrip("/") + "/chat/completions",
-                    json={"model": app.config["GLM_MODEL"], "messages": messages,
-                          "temperature": body.get("temperature", 0.3)},
-                    headers={"Authorization": f"Bearer {app.config['GLM_API_KEY']}"},
-                    timeout=180,
-                )
-            except httpx.HTTPError as e:
-                return err(f"上游 AI 请求失败：{e.__class__.__name__}", 502)
-            if resp.status_code != 429 or attempt == 2:
-                break
-            time.sleep(1.5)
+                cur = conn.execute(
+                    "SELECT COUNT(*) FROM license_codes WHERE status='unshipped'"
+                ).fetchone()[0]
+                if not force and cur >= app.config["RESTOCK_THRESHOLD"]:
+                    conn.execute("COMMIT")
+                    return 0
+                need = max(0, app.config["RESTOCK_TARGET"] - cur)
+                remark = f"自动补货 {datetime.now().strftime('%Y-%m-%d')}"
+                for _ in range(need):
+                    conn.execute(
+                        "INSERT INTO license_codes(sn, remark) VALUES(?, ?)",
+                        (gen_sn(conn), remark),
+                    )
+                conn.execute("COMMIT")
+                if need:
+                    log.info("restock +%d（未发货库存 %d → %d）", need, cur, cur + need)
+                return need
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
 
-        if resp.status_code == 200:  # 成功才计费
-            today = datetime.now().strftime("%Y-%m-%d")
-            if trial:
+    def _db_empty() -> bool:
+        with _db_lock:
+            conn = db()
+            empty = conn.execute("SELECT COUNT(*) FROM license_codes").fetchone()[0] == 0
+            conn.commit()
+            return empty
+
+    if _db_empty():                                      # FR-10：空库首启自动生成一批
+        _restock(force=True)
+
+    # ---------- 响应封装 ----------
+
+    def ok(data: dict | None = None, message: str = "ok"):
+        return jsonify({"code": 0, "message": message, "data": data or {}})
+
+    def fail(code: int, message: str):
+        return jsonify({"code": code, "message": message, "data": {}})
+
+    # ---------- 激活接口（匿名，核心） ----------
+
+    @app.post("/api/v1/license/activate")
+    def activate():
+        body = request.get_json(silent=True) or {}
+        sn_raw = body.get("sn")
+        mac_raw = body.get("mac")
+        ip = request.remote_addr or ""
+
+        # NFR-03 限流：每 IP 每分钟 ≤ 60 次（滑动窗口）
+        now = time.monotonic()
+        q = _rate[ip]
+        while q and now - q[0] > ACTIVATE_RATE_WINDOW:
+            q.popleft()
+        if len(q) >= ACTIVATE_RATE_LIMIT:
+            _log_activate(sn_raw, mac_raw, 429, ip)
+            return fail(429, "请求过于频繁，请稍后再试")
+        q.append(now)
+
+        # FR-01 判定表（自上而下）
+        if not sn_raw or not str(sn_raw).strip():          # 1 sn 缺失/为空
+            _log_activate(sn_raw, mac_raw, 1, ip)
+            return fail(1, "未激活")
+        if not mac_raw or not str(mac_raw).strip():        # 2 mac 缺失/为空
+            _log_activate(sn_raw, mac_raw, 4, ip)
+            return fail(4, "参数错误：MAC 为空")
+
+        sn = normalize_sn(sn_raw)
+        mac = normalize_mac(str(mac_raw))
+        if not mac:                                        # 2b 非法 MAC
+            _log_activate(sn_raw, mac_raw, 4, ip)
+            return fail(4, "参数错误：MAC 格式非法")
+
+        row = db().execute(
+            "SELECT * FROM license_codes WHERE sn=?", (sn,)
+        ).fetchone()
+        if not row:                                        # 3 码不存在
+            _log_activate(sn, mac_raw, 2, ip)
+            return fail(2, "无效激活码")
+
+        activated_at = _now()
+        token = sign_token(app.config["SIGN_KEY"], sn, mac, activated_at)
+        data = {"sn": sn, "mac": mac, "activated_at": activated_at, "token": token}
+
+        if not row["bound_mac"]:                           # 4 未绑定 → 绑定激活
+            with _db_lock:
                 db().execute(
-                    "INSERT INTO trial_usage (fingerprint, day, count) VALUES (?,?,1) "
-                    "ON CONFLICT(fingerprint, day) DO UPDATE SET count=count+1",
-                    (trial["fingerprint"], today),
+                    "UPDATE license_codes SET status='activated', bound_mac=?,"
+                    " activated_at=? WHERE id=?",
+                    (mac, activated_at, row["id"]),
                 )
-            else:
+                db().commit()
+            _log_activate(sn, mac_raw, 0, ip)
+            log.info("activate ok sn=%s mac=%s（新绑定）", sn, mac)
+            return ok(data, "激活成功")
+
+        if row["bound_mac"] == mac:                        # 5 同机恢复 → 放行
+            with _db_lock:
                 db().execute(
-                    "INSERT INTO usage (license_id, day, count) VALUES (?,?,1) "
-                    "ON CONFLICT(license_id, day) DO UPDATE SET count=count+1",
-                    (row["id"], today),
+                    "UPDATE license_codes SET activated_at=? WHERE id=?",
+                    (activated_at, row["id"]),
                 )
-            db().commit()
-        return app.response_class(resp.text, status=resp.status_code,
-                                  mimetype="application/json")
+                db().commit()
+            _log_activate(sn, mac_raw, 0, ip)
+            log.info("activate ok sn=%s mac=%s（同机恢复，重发凭证）", sn, mac)
+            return ok(data, "激活成功")
 
-    # ---------------- 官网与安装包分发 ----------------
-    # 你的网站 = 授权服务器本身：/ 官网下载页，/download/<文件> 安装包。
-    # 安装包不入 git，由 packaging/sync-to-server.sh 同步到 downloads/ 目录。
+        _log_activate(sn, mac_raw, 3, ip)                  # 6 他机 → 拒绝
+        log.warning("activate denied sn=%s mac=%s（已绑定 %s）", sn, mac, row["bound_mac"])
+        return fail(3, "设备不匹配：该激活码已被其他设备使用")
 
-    @app.get("/")
-    def site_index():
-        page = Path(app.config["SITE_DIR"]) / "index.html"
-        if not page.exists():
-            return err(f"官网页面缺失：{page}", 500)
-        return app.response_class(page.read_bytes(), mimetype="text/html; charset=utf-8")
+    def _log_activate(sn, mac, code: int, ip: str) -> None:
+        """FR-06：每次激活请求写日志，无论成败（绝不打密钥）。"""
+        try:
+            with _db_lock:
+                db().execute(
+                    "INSERT INTO activate_logs(sn, mac, result_code, ip)"
+                    " VALUES(?, ?, ?, ?)",
+                    (str(sn or ""), str(mac or ""), code, ip),
+                )
+                db().commit()
+        except sqlite3.Error:  # 日志失败不阻断业务
+            log.exception("activate_logs 写入失败")
 
-    @app.get("/download/<path:fname>")
-    def site_download(fname: str):
-        from flask import send_file
+    # ---------- 管理员鉴权 ----------
 
-        base = Path(app.config["DOWNLOADS_DIR"]).resolve()
-        target = (Path(app.config["DOWNLOADS_DIR"]) / fname).resolve()
-        if base not in target.parents or not target.is_file():  # 防路径穿越
-            return err("文件不存在", 404)
-        if fname.endswith(".json"):  # version.json 供官网页读版本号，直接返回
-            return app.response_class(target.read_bytes(), mimetype="application/json")
-        # send_file 流式分块发送：大安装包不会占满内存，慢客户端也不会
-        # 因 worker 长时间无响应被杀（实测整读内存版会导致下载中断）
-        return send_file(target, as_attachment=True, download_name=target.name,
-                         mimetype="application/octet-stream")
+    @app.post("/api/v1/admin/login")
+    def admin_login():
+        if not app.config["ADMIN_PASSWORD"]:               # FR-41 未配置明确报错
+            return fail(500, "服务器未配置 ADMIN_PASSWORD，管理功能不可用")
+        body = request.get_json(silent=True) or {}
+        password = str(body.get("password") or "")
+        if not hmac.compare_digest(password, app.config["ADMIN_PASSWORD"]):
+            return fail(401, "密码错误")
+        token, expires_at = _issue_admin_token()
+        log.info("admin login ok")
+        return ok({"token": token, "expires_at": expires_at})
 
-    # ---------------- 管理后台 ----------------
+    def _issue_admin_token() -> tuple[str, str]:
+        """无状态管理 token：exp.HMAC(ADMIN_PASSWORD, "admin|exp")。
+
+        线上 gunicorn 多 worker，内存 dict 各存各的 → 登录后下一个请求打到
+        别的 worker 就 401（实测「每个操作都弹登录页」）。改为不落状态的
+        签名 token，任何 worker 都能独立验证。改 ADMIN_PASSWORD 即全员失效。
+        """
+        expires = datetime.now() + timedelta(days=ADMIN_TOKEN_DAYS)
+        exp = expires.strftime("%Y%m%d%H%M%S")
+        sig = hmac.new(
+            (app.config["ADMIN_PASSWORD"] or "").encode(),
+            f"admin|{exp}".encode(), hashlib.sha256,
+        ).hexdigest()
+        return f"{exp}.{sig}", expires.strftime("%Y-%m-%d %H:%M:%S")
 
     def _admin_ok() -> bool:
-        key = request.headers.get("X-Admin-Key") or request.args.get("key") or request.form.get("key")
-        return bool(key) and hmac.compare_digest(key, app.config["ADMIN_KEY"])
+        auth = request.headers.get("Authorization", "")
+        token = auth[7:] if auth.startswith("Bearer ") else ""
+        if not token or "." not in token:
+            return False
+        exp, sig = token.split(".", 1)
+        expect = hmac.new(
+            (app.config["ADMIN_PASSWORD"] or "").encode(),
+            f"admin|{exp}".encode(), hashlib.sha256,
+        ).hexdigest()
+        if not hmac.compare_digest(sig, expect):
+            return False
+        try:
+            return datetime.strptime(exp, "%Y%m%d%H%M%S") > datetime.now()
+        except ValueError:
+            return False
+
+    # ---------- 取码发货 ----------
+
+    @app.post("/api/v1/admin/codes/take")
+    def codes_take():
+        if not _admin_ok():
+            return fail(401, "未授权")
+        with _db_lock:
+            conn = db()
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                # FIFO 取最旧的未发货码；rowcount 即原子性凭据（CAS）
+                row = conn.execute(
+                    "SELECT id, sn FROM license_codes"
+                    " WHERE status='unshipped' ORDER BY id LIMIT 1"
+                ).fetchone()
+                if not row:
+                    conn.execute("COMMIT")
+                    return fail(501, "库存为空且补货失败，请联系管理员")
+                shipped_at = _now()
+                cur = conn.execute(
+                    "UPDATE license_codes SET status='shipped', shipped_at=?"
+                    " WHERE id=? AND status='unshipped'",
+                    (shipped_at, row["id"]),
+                )
+                if cur.rowcount != 1:                      # 并发下被别人取走 → 冲突
+                    conn.execute("COMMIT")
+                    return fail(501, "取码冲突，请重试")
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+        _restock()                                         # FR-10：低于阈值自动补货
+        log.info("take sn=%s（FIFO id=%s）", row["sn"], row["id"])
+        return ok({"sn": row["sn"], "shipped_at": shipped_at})
+
+    # ---------- 退回 ----------
+
+    @app.post("/api/v1/admin/codes/<sn>/return")
+    def codes_return(sn: str):
+        if not _admin_ok():
+            return fail(401, "未授权")
+        norm = normalize_sn(sn)
+        with _db_lock:
+            cur = db().execute(
+                "UPDATE license_codes SET status='unshipped', shipped_at=NULL"
+                " WHERE sn=? AND status='shipped' AND bound_mac IS NULL",
+                (norm,),
+            )
+            db().commit()
+        if cur.rowcount != 1:                              # FR-23：已激活不可退回
+            return fail(4, "仅已发货且未激活的码可退回")
+        log.info("return sn=%s", norm)
+        return ok(message="已退回未发货")
+
+    # ---------- 解绑（换电脑售后：清掉绑定，码回到已发货可再激活） ----------
+
+    @app.post("/api/v1/admin/codes/<sn>/unbind")
+    def codes_unbind(sn: str):
+        if not _admin_ok():
+            return fail(401, "未授权")
+        norm = normalize_sn(sn)
+        with _db_lock:
+            cur = db().execute(
+                "UPDATE license_codes SET status='shipped', bound_mac=NULL,"
+                " activated_at=NULL WHERE sn=? AND status='activated'",
+                (norm,),
+            )
+            db().commit()
+        if cur.rowcount != 1:                              # 未激活的码谈不上解绑
+            return fail(4, "仅已激活的码可解绑")
+        log.info("unbind sn=%s", norm)
+        return ok(message="已解绑，买家可重新激活")
+
+    # ---------- 列表 ----------
+
+    @app.get("/api/v1/admin/codes")
+    def codes_list():
+        if not _admin_ok():
+            return fail(401, "未授权")
+        try:
+            page = max(1, int(request.args.get("page", 1)))
+            page_size = min(100, max(1, int(request.args.get("page_size", 20))))
+        except ValueError:
+            page, page_size = 1, 20
+        where, params = "", []
+        q = str(request.args.get("q", "")).strip()
+        status = request.args.get("status", "all")
+        conds = []
+        if q:                                              # 按 SN 片段找码（售后解绑用）
+            conds.append("sn LIKE ?")
+            params.append(f"%{q.upper()}%")
+        if status in ("unshipped", "shipped", "activated"):
+            conds.append("status=?")
+            params.append(status)
+        if conds:
+            where = "WHERE " + " AND ".join(conds)
+        conn = db()
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM license_codes {where}", params
+        ).fetchone()[0]
+        unshipped = conn.execute(
+            "SELECT COUNT(*) FROM license_codes WHERE status='unshipped'"
+        ).fetchone()[0]
+        rows = conn.execute(
+            f"SELECT * FROM license_codes {where} ORDER BY id DESC LIMIT ? OFFSET ?",
+            params + [page_size, (page - 1) * page_size],
+        ).fetchall()
+        items = [{
+            "sn": r["sn"], "status": r["status"], "bound_mac": r["bound_mac"],
+            "shipped_at": r["shipped_at"], "activated_at": r["activated_at"],
+        } for r in rows]
+        return ok({
+            "total": total, "unshipped_count": unshipped,
+            "page": page, "page_size": page_size, "items": items,
+        })
+
+    # ---------- 管理后台页面 + 官网下载页 ----------
 
     @app.get("/admin")
     def admin_page():
-        if not _admin_ok():
-            return err("管理密钥错误", 403)
-        return render_template("admin.html", rows=_all_rows(db()),
-                               trials=_all_trials(db()), key=app.config["ADMIN_KEY"])
+        return send_from_directory(HERE / "static", "admin.html")
 
-    @app.get("/admin/export")
-    def admin_export():
-        """导出未激活码（纯文本一行一个），导入发卡平台用。"""
-        if not _admin_ok():
-            return err("管理密钥错误", 403)
-        rows = db().execute(
-            "SELECT code FROM licenses WHERE device_fingerprint IS NULL AND is_active=1 "
-            "ORDER BY id DESC"
-        ).fetchall()
-        codes = "\n".join(r["code"] for r in rows)
-        return app.response_class(codes, mimetype="text/plain; charset=utf-8")
+    @app.get("/")
+    def root_page():
+        """根路径 → 下载页（客户端品牌名点这里）。"""
+        return redirect("/download")
 
-    @app.post("/admin/generate")
-    def admin_generate():
-        if not _admin_ok():
-            return err("管理密钥错误", 403)
-        count = max(1, min(int(request.form.get("count", 1)), 100))
-        note = request.form.get("note", "").strip()
-        days = request.form.get("days", "").strip()  # 空 = 永久
-        expires = ""
-        if days.isdigit() and int(days) > 0:
-            expires = (_utcnow() + timedelta(days=int(days))).isoformat()
-        codes = []
-        for _ in range(count):
-            code = "BP-" + "-".join(
-                secrets.token_hex(2).upper() for _ in range(4)
-            )  # BP-XXXX-XXXX-XXXX-XXXX
-            db().execute(
-                "INSERT INTO licenses (code, note, expires_at) VALUES (?,?,?)",
-                (code, note, expires),
-            )
-            codes.append(code)
-        db().commit()
-        return render_template("admin.html", rows=_all_rows(db()),
-                               trials=_all_trials(db()), key=app.config["ADMIN_KEY"],
-                               generated=codes)
+    @app.get("/site")
+    @app.get("/site/")
+    @app.get("/site/<path:fname>")
+    def site(fname: str = "index.html"):
+        """旧地址兼容：/site 系列一律转去 /download。"""
+        return redirect("/download")
 
-    @app.post("/admin/action")
-    def admin_action():
-        """禁用/启用/解绑/调配额，op 字段区分。"""
-        if not _admin_ok():
-            return err("管理密钥错误", 403)
-        op = request.form.get("op")
-        lid = request.form.get("id") or ""
-        if op in ("toggle", "unbind", "quota"):
-            if not lid.isdigit():
-                return err("参数错误", 400)
-            lid = int(lid)
-        if op == "toggle":
-            db().execute("UPDATE licenses SET is_active = 1 - is_active WHERE id=?", (lid,))
-        elif op == "unbind":
-            # 一码一机的换机通道；unbind_count 防反复白嫖（上限在页面提示）
-            db().execute(
-                "UPDATE licenses SET device_fingerprint=NULL, activated_at=NULL, "
-                "unbind_count=unbind_count+1 WHERE id=?", (lid,))
-        elif op == "quota":
-            q = request.form.get("daily_quota", "")
-            if q.isdigit() and int(q) >= 0:
-                db().execute("UPDATE licenses SET daily_quota=? WHERE id=?", (int(q), lid))
-        elif op == "del_trial":
-            # 删试用记录即封该设备：下次连接重新开始一次试用（防删本地文件刷）
-            fp = request.form.get("fingerprint", "")
-            if not fp:
-                return err("参数错误", 400)
-            db().execute("DELETE FROM trial_usage WHERE fingerprint=?", (fp,))
-            db().execute("DELETE FROM trials WHERE fingerprint=?", (fp,))
-        elif op == "trial_quota":
-            fp = request.form.get("fingerprint", "")
-            q = request.form.get("daily_quota", "")
-            if fp and q.isdigit() and int(q) >= 0:
-                db().execute("UPDATE trials SET daily_quota=? WHERE fingerprint=?", (int(q), fp))
-        else:
-            return err("未知操作", 400)
-        db().commit()
-        return redirect(f"/admin?key={app.config['ADMIN_KEY']}")
+    @app.get("/download")
+    @app.get("/download/")
+    def download_page():
+        """下载页（原 /site）：内容在 static-site/，文件仍在 /download/<fname>。"""
+        return send_from_directory(HERE / "static-site", "index.html")
 
-    def _all_rows(dbconn):
-        """列表页数据：今日用量 + 用户画像（累计用量/最近活跃/首次使用时间/网页会话数）。"""
-        return dbconn.execute(
-            "SELECT l.*, COALESCE(u.count,0) AS used_today, "
-            "COALESCE((SELECT SUM(x.count) FROM usage x WHERE x.license_id=l.id),0) AS total_used, "
-            "(SELECT MAX(x.day) FROM usage x WHERE x.license_id=l.id) AS last_active, "
-            "datetime(l.activated_at,'+8 hours') AS activated_cn, "
-            "(SELECT COUNT(*) FROM web_sessions x WHERE x.license_id=l.id) AS web_sessions, "
-            "datetime((SELECT MIN(x.created_at) FROM web_sessions x WHERE x.license_id=l.id),'+8 hours') AS web_first_cn "
-            "FROM licenses l "
-            "LEFT JOIN usage u ON u.license_id=l.id AND u.day=date('now','localtime') "
-            "ORDER BY l.id DESC"
-        ).fetchall()
-
-    def _all_trials(dbconn):
-        """试用设备列表：指纹 / 首次连接 / 剩余 / 今日用量与配额 / 是否已到期。"""
-        rows = dbconn.execute(
-            "SELECT t.*, "
-            "datetime(t.first_seen_at,'+8 hours') AS first_seen_cn, "
-            "COALESCE((SELECT SUM(x.count) FROM trial_usage x WHERE x.fingerprint=t.fingerprint),0) AS total_used, "
-            "(SELECT MAX(x.day) FROM trial_usage x WHERE x.fingerprint=t.fingerprint) AS last_active, "
-            "COALESCE((SELECT u.count FROM trial_usage u WHERE u.fingerprint=t.fingerprint "
-            "          AND u.day=date('now','localtime')),0) AS used_today "
-            "FROM trials t ORDER BY t.first_seen_at DESC"
-        ).fetchall()
-        now = _utcnow()
-        out = []
-        for r in rows:
-            ends = datetime.fromisoformat(r["first_seen_at"]) + timedelta(hours=TRIAL_HOURS)
-            item = dict(r)  # sqlite3.Row 只读，模板要新增字段先转 dict
-            item["ends_at"] = ends.isoformat()
-            item["remaining_hours"] = max(0, int((ends - now).total_seconds() / 3600))
-            item["expired"] = now >= ends
-            out.append(item)
-        return out
+    @app.get("/download/<path:fname>")
+    def download(fname: str):
+        """安装包下发（send_from_directory 自带路径穿越防护）。"""
+        return send_from_directory(HERE / "downloads", fname)
 
     return app
 
 
-# 开发运行：python app.py
+app = create_app()
+
 if __name__ == "__main__":
-    create_app().run(host="127.0.0.1", port=7900)
+    app.run(host="127.0.0.1", port=7900)

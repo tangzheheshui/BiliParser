@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BiliParser 授权管理</title>
+<style>
+:root{--bg:#101418;--panel:#171d24;--panel2:#1d242d;--line:#2a333e;--fg:#dbe4ee;
+      --dim:#8b98a8;--accent:#4da3ff;--ok:#4ade80;--warn:#fbbf24;--bad:#f87171}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font:14px/1.6 -apple-system,"PingFang SC",sans-serif;
+     min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:24px 16px}
+h1{font-size:18px;margin-bottom:18px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px;
+      width:100%;max-width:980px;margin-bottom:16px}
+input{background:var(--panel2);border:1px solid var(--line);border-radius:9px;color:var(--fg);
+      padding:10px 12px;font-size:14px;width:100%;outline:none}
+input:focus{border-color:var(--accent)}
+button{background:var(--accent);border:none;border-radius:9px;color:#fff;padding:10px 20px;
+       font-size:14px;cursor:pointer}
+button:hover{filter:brightness(1.1)}
+button.ghost{background:transparent;border:1px solid var(--line);color:var(--dim);padding:5px 12px;font-size:12px}
+button.ghost:hover{border-color:var(--accent);color:var(--accent)}
+button.danger{border-color:rgba(248,113,113,.5);color:var(--bad)}
+button.danger:hover{border-color:var(--bad)}
+.muted{color:var(--dim);font-size:12px}
+#login{max-width:360px;margin-top:12vh}
+.err{color:var(--bad);font-size:13px;margin-top:8px;min-height:18px}
+.hidden{display:none!important}
+.top{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.stock{font-size:13px;color:var(--dim)}
+.stock b{color:var(--ok);font-size:18px}
+#take-btn{font-size:16px;padding:13px 34px;font-weight:600}
+#taken{margin-top:16px;text-align:center;padding:16px;border:1px dashed var(--accent);
+       border-radius:12px;display:none}
+#taken .sn{font-size:30px;font-weight:700;letter-spacing:3px;color:var(--accent);margin:8px 0}
+.searchbar{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.searchbar input{max-width:320px;font-family:ui-monospace,Menlo,monospace;letter-spacing:1px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}
+th{color:var(--dim);font-weight:500}
+.sn-cell{font-family:ui-monospace,Menlo,monospace;letter-spacing:1px}
+.st{display:inline-block;padding:1px 10px;border-radius:20px;font-size:12px}
+.st-unshipped{background:rgba(139,152,168,.15);color:var(--dim)}
+.st-shipped{background:rgba(251,191,36,.12);color:var(--warn)}
+.st-activated{background:rgba(74,222,128,.12);color:var(--ok)}
+.pager{display:flex;align-items:center;gap:12px;justify-content:center;margin-top:14px}
+#toast{position:fixed;bottom:28px;left:50%;transform:translateX(-50%);background:#243044;
+       border:1px solid var(--accent);border-radius:10px;padding:10px 22px;font-size:14px;
+       display:none;z-index:9}
+</style>
+</head>
+<body>
+<h1>BiliParser 授权管理</h1>
+
+<!-- 登录 -->
+<div class="card" id="login">
+  <div style="margin-bottom:12px" class="muted">管理员登录</div>
+  <input id="pw" type="password" placeholder="管理密码" autocomplete="current-password">
+  <div class="err" id="lg-err"></div>
+  <button id="lg-btn" style="width:100%;margin-top:6px">登录</button>
+</div>
+
+<!-- 主界面：取码发货 + 找码售后（解绑/退回） -->
+<div class="hidden" id="main">
+  <div class="card">
+    <div class="top">
+      <div class="stock">未发货库存 <b id="stock">–</b> 个</div>
+      <button id="take-btn">取一个激活码</button>
+      <button class="ghost" id="logout">退出登录</button>
+    </div>
+    <div id="taken">
+      <div class="muted">取码成功，复制发给买家（微信/QQ 皆可）</div>
+      <div class="sn" id="taken-sn">–</div>
+      <button id="copy-btn">复制激活码</button>
+      <span class="muted" id="copy-hint" style="margin-left:10px"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="searchbar">
+      <input id="q" placeholder="输入激活码片段搜索（售后解绑：粘买家给的码）" spellcheck="false">
+      <span class="muted" id="q-hint"></span>
+    </div>
+    <div style="overflow-x:auto">
+      <table>
+        <thead><tr>
+          <th>激活码</th><th>状态</th><th>绑定设备</th><th>发货时间</th>
+          <th>激活时间</th><th>操作</th>
+        </tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <div class="pager">
+      <button class="ghost" id="prev">上一页</button>
+      <span class="muted" id="pageinfo">–</span>
+      <button class="ghost" id="next">下一页</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+let token = localStorage.getItem('admin_token') || '';
+let curPage = 1, lastTotal = 0, pageSize = 20, qTimer = null;
+
+const $ = s => document.querySelector(s);
+const toast = m => { const t=$('#toast'); t.textContent=m; t.style.display='block';
+                     setTimeout(()=>t.style.display='none', 1800); };
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, Object.assign({
+    headers: Object.assign({'Content-Type':'application/json'},
+      token ? {'Authorization':'Bearer '+token} : {})
+  }, opts));
+  const d = await r.json();
+  if (d.code === 401) { showLogin(); throw new Error('未授权'); }
+  return d;
+}
+
+function showLogin(){ $('#login').classList.remove('hidden'); $('#main').classList.add('hidden'); }
+function showMain(){ $('#login').classList.add('hidden'); $('#main').classList.remove('hidden'); }
+
+async function login() {
+  const pw = $('#pw').value;
+  $('#lg-btn').disabled = true; $('#lg-err').textContent = '';
+  try {
+    const d = await api('/api/v1/admin/login',
+      {method:'POST', body: JSON.stringify({password: pw})});
+    if (d.code === 0) {
+      token = d.data.token; localStorage.setItem('admin_token', token);
+      showMain(); await refresh();
+    } else $('#lg-err').textContent = d.message || '登录失败';
+  } catch(e) { if(e.message!=='未授权') $('#lg-err').textContent = '网络异常'; }
+  $('#lg-btn').disabled = false;
+}
+$('#lg-btn').onclick = login;
+$('#pw').addEventListener('keydown', e => { if(e.key==='Enter') login(); });
+
+$('#logout').onclick = () => { localStorage.removeItem('admin_token'); token=''; showLogin(); };
+
+async function refresh() {
+  const q = encodeURIComponent($('#q').value.trim());
+  const d = await api(`/api/v1/admin/codes?page=${curPage}&page_size=${pageSize}&q=${q}`);
+  if (d.code !== 0) return;
+  $('#stock').textContent = d.data.unshipped_count;
+  lastTotal = d.data.total;
+  $('#q-hint').textContent = q ? `匹配 ${d.data.total} 条` : '';
+  const pages = Math.max(1, Math.ceil(d.data.total / d.data.page_size));
+  if (curPage > pages) { curPage = pages; return refresh(); }
+  $('#pageinfo').textContent = `第 ${curPage} / ${pages} 页 · 共 ${d.data.total} 条`;
+  const names = {unshipped:'未发货', shipped:'已发货', activated:'已激活'};
+  $('#rows').innerHTML = d.data.items.map(r => `
+    <tr>
+      <td class="sn-cell">${r.sn}</td>
+      <td><span class="st st-${r.status}">${names[r.status]||r.status}</span></td>
+      <td class="muted">${r.bound_mac || '–'}</td>
+      <td class="muted">${r.shipped_at || ''}</td>
+      <td class="muted">${r.activated_at || ''}</td>
+      <td>${r.status==='shipped'
+            ? `<button class="ghost" onclick="ret('${r.sn}')">退回</button>` : ''}
+          ${r.status==='activated'
+            ? `<button class="ghost danger" onclick="unbind('${r.sn}')">解绑</button>` : ''}</td>
+    </tr>`).join('') || `<tr><td colspan="6" class="muted" style="text-align:center;padding:24px">没有匹配的激活码</td></tr>`;
+}
+$('#q').addEventListener('input', () => {
+  clearTimeout(qTimer);
+  qTimer = setTimeout(() => { curPage = 1; refresh(); }, 250);
+});
+
+async function take() {
+  $('#take-btn').disabled = true;
+  try {
+    const d = await api('/api/v1/admin/codes/take', {method:'POST'});
+    if (d.code === 0) {
+      $('#taken').style.display = 'block';
+      $('#taken-sn').textContent = d.data.sn;
+      $('#copy-hint').textContent = '';
+      await refresh();
+    } else toast(d.message || '取码失败');
+  } catch(e) { toast('网络异常'); }
+  $('#take-btn').disabled = false;
+}
+$('#take-btn').onclick = take;
+
+$('#copy-btn').onclick = async () => {
+  const sn = $('#taken-sn').textContent;
+  try { await navigator.clipboard.writeText(sn); $('#copy-hint').textContent = '已复制 ✓'; }
+  catch(e) { $('#copy-hint').textContent = '复制失败，请手动选择'; }
+};
+
+async function ret(sn) {
+  if (!confirm(`退回 ${sn}？（回到未发货库存，仅已发货未激活的码可退）`)) return;
+  const d = await api(`/api/v1/admin/codes/${sn}/return`, {method:'POST'});
+  toast(d.code === 0 ? '已退回未发货' : (d.message || '退回失败'));
+  await refresh();
+}
+
+async function unbind(sn) {
+  if (!confirm(`解绑 ${sn}？\n买家换电脑时用：清掉旧设备绑定，该码可重新激活（原设备失效）。`)) return;
+  const d = await api(`/api/v1/admin/codes/${sn}/unbind`, {method:'POST'});
+  toast(d.code === 0 ? '已解绑，买家可重新激活' : (d.message || '解绑失败'));
+  await refresh();
+}
+
+$('#prev').onclick = () => { if (curPage > 1) { curPage--; refresh(); } };
+$('#next').onclick = () => {
+  if (curPage < Math.ceil(lastTotal / pageSize)) { curPage++; refresh(); }
+};
+
+(async () => {   // 有存量 token 先试一把，401 自动回登录页
+  if (token) { try { showMain(); await refresh(); return; } catch(e) {} }
+  showLogin();
+})();
+</script>
+</body>
+</html>

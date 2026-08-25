@@ -219,54 +219,15 @@ def _chat_anthropic(cfg, messages: list[dict]) -> str:
         raise SummarizeError(f"AI 返回格式异常：{resp.text[:200]}") from e
 
 
-def _chat_managed(cfg, messages: list[dict]) -> str:
-    """发行版模式：AI 调用经授权服务器代理（服务器持有 GLM key，按码限流）。"""
-    from . import licensing  # 延迟导入，CLI 直连模式不依赖
-
-    base = cfg.managed_server.rstrip("/")
-    try:
-        # 网页托管版把会话 token 直接挂在 cfg 上（无本地凭证文件）
-        headers = getattr(cfg, "managed_auth", None) or licensing.auth_header()
-        resp = httpx.post(
-            base + "/api/ai/chat",
-            json={"messages": messages, "temperature": 0.3},
-            headers=headers, timeout=180,
-        )
-    except licensing.LicensingError as e:
-        raise SummarizeError(str(e), hint=e.hint) from e
-    except httpx.HTTPError as e:
-        raise SummarizeError(
-            f"连不上授权服务器（{e.__class__.__name__}）", hint="请检查网络后重试"
-        ) from e
-    if resp.status_code != 200:
-        try:
-            detail = resp.json().get("error") or resp.text[:200]
-            hint = resp.json().get("hint")
-        except ValueError:
-            detail, hint = resp.text[:200], None
-        if resp.status_code == 403:
-            hint = hint or "授权已失效，请重新激活"
-        raise SummarizeError(f"AI 调用失败：{detail}", hint=hint)
-    try:
-        return resp.json()["choices"][0]["message"]["content"]
-    except (KeyError, IndexError, ValueError) as e:
-        raise SummarizeError(f"AI 返回格式异常：{resp.text[:200]}") from e
-
-
 def _chat(cfg, messages: list[dict]) -> str:
-    """调一次对话接口；真限流时重试一次。
+    """调一次对话接口（用户自有 key 直连）；真限流时重试一次。
 
-    模式优先级：用户自有 key 直连（Anthropic 兼容 / OpenAI 兼容）>
-    授权服务器代理（发行版默认：服务器免费模型 + 每码配额）。即用户在
-    设置里配了自己的 key 就用自己的（运营方零成本），没配走服务器。
     注意：智谱余额不足（错误码 1113）也返回 HTTP 429，不能重试，
     要把「请充值」透出给用户。
     """
     if getattr(cfg, "glm_api_key", ""):
         if _is_anthropic_endpoint(cfg):
             return _chat_anthropic(cfg, messages)
-    elif getattr(cfg, "managed_server", ""):
-        return _chat_managed(cfg, messages)
 
     url = cfg.glm_base_url.rstrip("/") + "/chat/completions"
     headers = {"Authorization": f"Bearer {cfg.glm_api_key}"}

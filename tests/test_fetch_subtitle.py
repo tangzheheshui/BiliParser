@@ -85,3 +85,21 @@ def test_inconsistent_fingerprints_flagged(monkeypatch):
     monkeypatch.setattr(bilibili, "download_subtitle", fake_dl)
     sub, lines, cov, consistent = bilibili.fetch_full_subtitle(None, "BV", 1, duration=310, min_coverage=1.1, rounds=3)
     assert sub is not None and not consistent
+
+
+def test_multi_track_different_first_lines_still_consistent(monkeypatch, tmp_path):
+    """回归：CC 与 AI 两条轨首行本就不同（正常视频常态），一遍拉全不得误报串台。
+
+    旧实现把所有轨的首行混在一个集合里，多轨视频必 len>1 → 必误报。
+    """
+    monkeypatch.setattr(bilibili, "_SEEN_PATH", tmp_path / "seen.json")
+    cc = {"id": 11, "lan": "zh-Hans", "subtitle_url": "//x/cc.json"}
+    ai = {"id": 22, "lan": "ai-zh", "subtitle_url": "//x/ai.json"}
+    cc_lines = [{"from": i * 5, "to": i * 5 + 5, "content": f"CC第{i}句"} for i in range(62)]
+    ai_lines = [{"from": i * 5, "to": i * 5 + 5, "content": f"AI第{i}句"} for i in range(60)]
+    files = {"//x/cc.json": cc_lines, "//x/ai.json": ai_lines}
+    monkeypatch.setattr(bilibili, "get_subtitle_info", lambda *a, **k: {"subtitles": [cc, ai]})
+    monkeypatch.setattr(bilibili, "download_subtitle", lambda c, u: files[u])
+    sub, lines, cov, consistent = bilibili.fetch_full_subtitle(None, "BV", 77, duration=310)
+    assert sub is not None and cov >= 0.8
+    assert consistent is True

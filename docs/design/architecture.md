@@ -2,8 +2,8 @@
 
 > 本文讲的是**客户端核心链路**（`src/biliparser/`：模块结构、字幕获取、AI 总结、
 > 实测踩过的坑）；授权服务器（`license-server/`）的实现原理见
-> [服务器需求](docs/requirements/server.md)。需求侧另见
-> [客户端需求](docs/requirements/client.md)；部署见 [部署指南](docs/operations/deploy.md)。
+> [服务器需求](../requirements/server.md)。需求侧另见
+> [客户端需求](../requirements/client.md)；部署见 [部署指南](../operations/deploy.md)。
 
 ## 一句话定位
 
@@ -19,9 +19,9 @@ src/biliparser/
 ├── wbi.py          wbi 签名（从 nav 的 wbi_img 提取密钥，对部分接口做参数签名）
 ├── subtitle.py     字幕选择（语言优先级）与文本拼装（带时间戳）
 ├── meta.py         元数据 + 热评上下文（降级模式的输入）
-├── summarizer.py   GLM 总结（直连 / managed 服务器代理；超长视频 map-reduce）
-├── config.py       配置加载（~/.biliparser/config.toml + 环境变量覆盖 + 烧入的默认服务器）
-├── licensing.py    设备指纹 / 激活 / 凭证 / 验证 + 72h 离线宽限
+├── summarizer.py   AI 总结（用户自有 key 直连：智谱/DeepSeek；超长视频 map-reduce）
+├── config.py       配置加载（~/.biliparser/config.toml + 环境变量覆盖 + 烧入的激活服务器）
+├── licensing.py    MAC 读取 / 一次性激活 / 凭证（机器绑定混淆）/ 本地 HMAC 验签
 ├── desktop.py      pywebview 桌面壳（本地服务 + 原生窗口）
 ├── web.py          工作台 HTTP 服务（标准库起服，复用上面各模块）
 ├── cli.py          命令行入口
@@ -77,11 +77,11 @@ src/biliparser/
 
 ## AI 总结链路
 
-- **直连模式**（自用）：本地 `glm.api_key` 直接调智谱 GLM。
-- **发行模式**（售卖）：`config` 里 `managed.server_url` 有值 → AI 调用改走
-  授权服务器的 `/api/ai/chat` 代理。服务器持有 GLM key、按激活码做每日配额，
-  客户端只带 token 请求头。B 站请求始终走用户本机（避免同 IP 风控）。
-  见 [licensing.md](licensing.md)。
+- **恒走用户自有 key**（v2，2026-08-25 起）：本地配置 `glm.api_key`，
+  提供商二选一——智谱 GLM（base_url 以 `/anthropic` 结尾时走 Anthropic 协议）
+  或 DeepSeek（OpenAI 兼容）。费用用户自付，服务器不经手 AI。
+- 授权与 AI 解耦：激活只发一次 token 存本地（HMAC 验签，见
+  [客户端需求文档.md](../requirements/客户端需求文档.md)），AI 调用与授权状态无关。
 
 超长视频用 map-reduce 分段总结后合并（`summarizer.py`）。
 
