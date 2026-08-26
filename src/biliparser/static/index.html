@@ -333,9 +333,28 @@ function renderTranscript(text){
 function setState(msg, cls){const el=$('#state');el.textContent=msg||'';el.className=cls||''}
 function setContent(html){
   $('#content').innerHTML=html||'<div class="empty">尚未生成内容</div>';
-  // 总结里的独立时间戳 code（章节时间线）也做成可点击
+  const isTs=s=>/^\[?\d{1,2}:\d{2}(?::\d{2})?\]?$/.test(s.trim());
+  // ① 反引号包住的时间戳（<code>[mm:ss]</code>）→ 可点击
   document.querySelectorAll('#content code').forEach(el=>{
-    if(/^\[?\d{1,2}:\d{2}(?::\d{2})?\]?$/.test(el.textContent))el.classList.add('tsj');
+    if(isTs(el.textContent))el.classList.add('tsj');
+  });
+  // ② 裸时间戳（LLM 常把章节时间线写成不带反引号的 [12:34]）→ 包成可点击 span
+  const tsSplit=/(\[?\d{1,2}:\d{2}(?::\d{2})?\]?)/;
+  const walker=document.createTreeWalker($('#content'),NodeFilter.SHOW_TEXT);
+  const hits=[];
+  while(walker.nextNode()){
+    const n=walker.currentNode;
+    if(n.parentElement && n.parentElement.closest('code,.ts,.tsj,a')) continue;
+    if(tsSplit.test(n.nodeValue||'')) hits.push(n);
+  }
+  hits.forEach(n=>{
+    const frag=document.createDocumentFragment();
+    (n.nodeValue||'').split(tsSplit).forEach(p=>{
+      if(p==='')return;
+      if(isTs(p)){const sp=document.createElement('span');sp.className='ts';sp.textContent=p;frag.appendChild(sp);}
+      else frag.appendChild(document.createTextNode(p));
+    });
+    n.parentNode.replaceChild(frag,n);
   });
 }
 function toast(msg){setState(msg,'');setTimeout(()=>{if($('#state').textContent===msg)setState('')},2500)}
