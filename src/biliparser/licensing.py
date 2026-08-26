@@ -98,8 +98,11 @@ def mac_address() -> str:
             pass
     elif sys.platform == "win32":
         try:
+            # CREATE_NO_WINDOW：窗口化 App 起控制台子进程会闪 cmd 黑框，
+            # 而 _gate 每次业务操作都调 mac_address()，不加这行每次都弹一次。
             out = subprocess.run(["getmac", "/fo", "csv", "/nh"],
-                                 capture_output=True, text=True, timeout=5).stdout
+                                 capture_output=True, text=True, timeout=5,
+                                 creationflags=subprocess.CREATE_NO_WINDOW).stdout
             for line in out.splitlines():
                 m = re.search(r"([0-9A-Fa-f]{2}[-:]){5}[0-9A-Fa-f]{2}", line or "")
                 if m and set(m.group(0)) - {"0", "-", ":"}:
