@@ -54,6 +54,18 @@
 
 开发调试可用环境变量覆盖：`BILIPARSER_LICENSE_SERVER` / `BILIPARSER_SIGN_KEY`。
 
+### Windows 包走 CI（打 tag 触发）
+
+Windows 安装包只能由 CI 构建（`.github/workflows/release.yml`，`push: tags ["v*"]`），
+CI 从仓库 Secrets 烧入、不碰仓库文件：
+
+- `DIST_SIGN_KEY`：签名密钥（**必须与服务器 `LICENSE_SIGN_KEY` 完全一致**；未设则出「自用直连版」，激活后验签失败）
+- `DIST_SERVER_URL`：激活服务器地址（可选；未设则用仓库里已提交的 `packaging/_dist_server.txt`）
+
+流程：改代码 → `git tag v0.2.3 && git push origin v0.2.3` → 等 CI 出 Release →
+`SERVER=user@vps TAG=v0.2.3 bash packaging/sync-to-server.sh`（本机无 rsync 时改用
+scp 上传 `license-server/downloads/` 三个文件到服务器同名目录）。
+
 ## 日常运营
 
 取码发货 / 退回 / 看库存 → 见 [admin-guide.md](admin-guide.md)。
