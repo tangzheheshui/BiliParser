@@ -40,6 +40,16 @@ jobs:
             echo "未配置 DIST_SERVER_URL → 自用直连版"
           fi
 
+      - name: 烧入签名密钥（可选）
+        shell: bash
+        run: |
+          if [ -n "${{ secrets.DIST_SIGN_KEY }}" ]; then
+            printf '%s' "${{ secrets.DIST_SIGN_KEY }}" > packaging/_sign_key.txt
+            echo "发行版：已烧入签名密钥"
+          else
+            echo "未配置 DIST_SIGN_KEY → 自用直连版（无激活验签）"
+          fi
+
       - name: 安装依赖并打包
         shell: bash
         run: |
