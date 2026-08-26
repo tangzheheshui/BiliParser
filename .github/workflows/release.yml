@@ -85,7 +85,11 @@ jobs:
           Write-Host "安装器大小：$((Get-Item isetup.exe).Length) 字节"
           Start-Process -Wait -FilePath ".\isetup.exe" `
             -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/PORTABLE=1","/DIR=C:\InnoSetup"
-          & "C:\InnoSetup\ISCC.exe" "/DRepoRoot=$env:GITHUB_WORKSPACE" "packaging\biliparser.iss"
+          # 版本号单一来源：从 __init__.py 读 __version__，传给 ISCC 作 AppVersion（不再手动改 .iss）
+          $m = Select-String -Path "src\biliparser\__init__.py" -Pattern '__version__\s*=\s*"([^"]+)"'
+          $ver = if ($m) { $m.Matches[0].Groups[1].Value } else { "0.0.0" }
+          Write-Host "安装器版本：$ver"
+          & "C:\InnoSetup\ISCC.exe" "/DRepoRoot=$env:GITHUB_WORKSPACE" "/DAppVersion=$ver" "packaging\biliparser.iss"
           if ($LASTEXITCODE -ne 0) { throw "ISCC 编译失败：$LASTEXITCODE" }
 
       - uses: actions/upload-artifact@v4

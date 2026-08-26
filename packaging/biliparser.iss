@@ -9,10 +9,15 @@
 #ifndef RepoRoot
   #define RepoRoot ".."
 #endif
+; 版本号由 CI 从 src/biliparser/__init__.py 的 __version__ 提取后经 /DAppVersion 传入；
+; 本地手动编译（不带 /DAppVersion）时退回下面占位值。
+#ifndef AppVersion
+  #define AppVersion "0.0.0"
+#endif
 
 [Setup]
 AppName=BiliParser
-AppVersion=0.1.0
+AppVersion={#AppVersion}
 AppPublisher=BiliParser
 DefaultDirName={autopf}\BiliParser
 DefaultGroupName=BiliParser
