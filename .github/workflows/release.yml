@@ -2,7 +2,9 @@ name: build-release
 
 # 双平台构建：打 tag（v*）自动打包并发布 GitHub Release；
 # 也可在 Actions 页面手动触发（workflow_dispatch，仅出 artifacts 不发 Release）。
-# 发行版授权服务器地址配在仓库 Secrets 的 DIST_SERVER_URL（不配 = 自用直连版）。
+# 发行版烧入配置在仓库 Secrets：DIST_SERVER_URL（授权服务器地址）+
+# DIST_SIGN_KEY（签名密钥，须与服务器 LICENSE_SIGN_KEY 一致）；
+# 都不配 = 自用直连版。
 
 on:
   push:
@@ -47,7 +49,7 @@ jobs:
             printf '%s' "${{ secrets.DIST_SIGN_KEY }}" > packaging/_sign_key.txt
             echo "发行版：已烧入签名密钥"
           else
-            echo "未配置 DIST_SIGN_KEY → 自用直连版（无激活验签）"
+            echo "::warning::未配置 DIST_SIGN_KEY——发行版必须配，否则激活后本地验签失败"
           fi
 
       - name: 安装依赖并打包

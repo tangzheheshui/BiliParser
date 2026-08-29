@@ -1,9 +1,11 @@
-"""客户端鉴权：一次性激活 + 本地 HMAC 验签（激活后永久离线）。
+"""客户端鉴权：一次性激活 + 本地 HMAC 验签 + 每次启动联网核验。
 
-按 docs/requirements/客户端需求文档.md v2.1：
+按 docs/requirements/客户端需求文档.md v2.1 + 2026-08-29 补充：
 - 激活：仅无凭证/校验失败时，由用户在激活窗口输码触发一次联网请求；
 - 校验：每次启动本地重算 HMAC-SHA256(sn|mac|activated_at) 比对 token，
-  并核对当前机器 MAC——全程不联网，服务器宕机零影响；
+  并核对当前机器 MAC——本地部分全程不联网；
+- 启动核验（2026-08-29 新增）：每次启动另向服务器上报 {sn, mac}，
+  码被后台解绑/已换绑 → 清凭证踢回激活页；服务器不可达 → 离线宽容放行；
 - 设备标识：本机 MAC（取第一块有效物理网卡，多网卡固定策略 CR-03）。
 
 安全边界（如实）：签名密钥随客户端分发，理论上可被提取；MAC 也可被伪造。
@@ -22,7 +24,7 @@ from pathlib import Path
 import httpx
 
 LICENSE_PATH = Path.home() / ".biliparser" / "license.json"
-OFFICIAL_SITE = "http://193.112.26.217:7900/"   # 品牌名点击跳转的官网（固定字符串，改这里）
+OFFICIAL_SITE = "http://tangzheheshui.cn/biliparser"   # 品牌名点击跳转的官网（固定字符串，改这里）
 
 
 class LicensingError(Exception):
@@ -234,3 +236,41 @@ def verify_local(seed: str | None = None, key: str | None = None,
     if mac_now != cred["mac"]:
         return {"ok": False, "reason": "设备不匹配"}
     return {"ok": True, "reason": ""}
+
+
+# ---------------- 启动联网核验（每次启动；解绑/换绑后老设备失效） ----------------
+
+def verify_remote(server_url: str, seed: str | None = None) -> dict:
+    """每次启动把 {sn, mac} 报给服务器核验（2026-08-29 用户拍板：要能远程踢设备）。
+
+    返回 {checked, ok, reason}：
+    - checked=False：服务器不可达/响应异常/429 → 离线宽容，维持本地状态
+      （保住「离线也能用」；老服务器没有 /verify 也走这里）
+    - checked=True, ok=False：服务器明确判 2（码无效）/ 3（设备不匹配，
+      即后台已解绑或码已换绑新设备）→ 清掉本地凭证，下次走激活流程
+    """
+    cred = load_credential(seed)
+    if not cred:
+        return {"checked": False, "ok": False, "reason": "未激活"}
+    try:
+        resp = httpx.post(
+            server_url.rstrip("/") + "/api/v1/license/verify",
+            json={"sn": cred["sn"], "mac": normalize_mac(mac_address())},
+            timeout=4,
+        )
+    except httpx.HTTPError:
+        return {"checked": False, "ok": True, "reason": "服务器不可达，离线放行"}
+    try:
+        code = resp.json().get("code")
+    except ValueError:
+        code = None
+    if resp.status_code != 200 or code is None:
+        return {"checked": False, "ok": True, "reason": "服务器响应异常，离线放行"}
+    if code == 0:
+        return {"checked": True, "ok": True, "reason": ""}
+    if code in (2, 3):                                 # 明确吊销 → 清凭证
+        clear_credential()
+        return {"checked": True, "ok": False,
+                "reason": {2: "激活码已失效",
+                           3: "该激活码已在其他设备使用"}.get(code, "远程核验未通过")}
+    return {"checked": False, "ok": True, "reason": f"核验返回 {code}，离线放行"}

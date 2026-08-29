@@ -128,9 +128,8 @@ SERVER="$SERVER" bash packaging/sync-to-server.sh local    # 或用本机 dist/
 ```
 
 同步后用户可见：
-- 官网：`https://<域名>/site`（下载按钮自动高亮访客系统、显示最新版本号）
-- 直链：`https://<域名>/download/BiliParser-macOS.dmg`、`.../BiliParser-Setup-Windows.exe`
-- 路线 A（裸 IP）同理：`http://<IP>:7900/site`、`http://<IP>:7900/download/...`
+- 官网：`https://<域名>/biliparser/download`（下载按钮自动高亮访客系统、显示最新版本号）
+- 路线 A（裸 IP）同理：`http://<IP>:7900/download`
 
 ## 收尾
 

@@ -106,6 +106,9 @@ let token = localStorage.getItem('admin_token') || '';
 let curPage = 1, lastTotal = 0, pageSize = 20, qTimer = null;
 
 const $ = s => document.querySelector(s);
+
+// API 基路径：页面在 /biliparser/admin 时取 '/biliparser'，裸根部署时为 ''
+const BASE = location.pathname.replace(/\/[^/]*$/, '');
 const toast = m => { const t=$('#toast'); t.textContent=m; t.style.display='block';
                      setTimeout(()=>t.style.display='none', 1800); };
 
@@ -126,7 +129,7 @@ async function login() {
   const pw = $('#pw').value;
   $('#lg-btn').disabled = true; $('#lg-err').textContent = '';
   try {
-    const d = await api('/api/v1/admin/login',
+    const d = await api(BASE+'/api/v1/admin/login',
       {method:'POST', body: JSON.stringify({password: pw})});
     if (d.code === 0) {
       token = d.data.token; localStorage.setItem('admin_token', token);
@@ -142,7 +145,7 @@ $('#logout').onclick = () => { localStorage.removeItem('admin_token'); token='';
 
 async function refresh() {
   const q = encodeURIComponent($('#q').value.trim());
-  const d = await api(`/api/v1/admin/codes?page=${curPage}&page_size=${pageSize}&q=${q}`);
+  const d = await api(BASE+`/api/v1/admin/codes?page=${curPage}&page_size=${pageSize}&q=${q}`);
   if (d.code !== 0) return;
   $('#stock').textContent = d.data.unshipped_count;
   lastTotal = d.data.total;
@@ -172,7 +175,7 @@ $('#q').addEventListener('input', () => {
 async function take() {
   $('#take-btn').disabled = true;
   try {
-    const d = await api('/api/v1/admin/codes/take', {method:'POST'});
+    const d = await api(BASE+'/api/v1/admin/codes/take', {method:'POST'});
     if (d.code === 0) {
       $('#taken').style.display = 'block';
       $('#taken-sn').textContent = d.data.sn;
@@ -192,14 +195,14 @@ $('#copy-btn').onclick = async () => {
 
 async function ret(sn) {
   if (!confirm(`退回 ${sn}？（回到未发货库存，仅已发货未激活的码可退）`)) return;
-  const d = await api(`/api/v1/admin/codes/${sn}/return`, {method:'POST'});
+  const d = await api(BASE+`/api/v1/admin/codes/${sn}/return`, {method:'POST'});
   toast(d.code === 0 ? '已退回未发货' : (d.message || '退回失败'));
   await refresh();
 }
 
 async function unbind(sn) {
-  if (!confirm(`解绑 ${sn}？\n买家换电脑时用：清掉旧设备绑定，该码可重新激活（原设备失效）。`)) return;
-  const d = await api(`/api/v1/admin/codes/${sn}/unbind`, {method:'POST'});
+  if (!confirm(`解绑 ${sn}？\n买家换电脑时用：清掉旧设备绑定，该码可重新激活。\n老设备下次联网启动会被要求重新激活（0.2.5 之前的老版本客户端不受影响）。`)) return;
+  const d = await api(BASE+`/api/v1/admin/codes/${sn}/unbind`, {method:'POST'});
   toast(d.code === 0 ? '已解绑，买家可重新激活' : (d.message || '解绑失败'));
   await refresh();
 }

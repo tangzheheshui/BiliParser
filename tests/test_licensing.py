@@ -237,3 +237,89 @@ def test_verify_local_never_touches_network(monkeypatch):
 
     monkeypatch.setattr(licensing.httpx, "post", boom)
     assert licensing.verify_local(key=KEY)["ok"] is True
+
+
+# ---------- 启动联网核验 verify_remote（每次启动，远程吊销落点） ----------
+
+def test_verify_remote_ok(monkeypatch):
+    _save_ok()
+    monkeypatch.setattr(licensing.httpx, "post", lambda *a, **k: _Resp(0))
+    d = licensing.verify_remote("http://s/")
+    assert d == {"checked": True, "ok": True, "reason": ""}
+    assert licensing.LICENSE_PATH.exists()           # 凭证保留
+
+
+def test_verify_remote_posts_sn_and_normalized_mac(monkeypatch):
+    _save_ok()
+    captured = {}
+
+    def fake_post(url, json=None, timeout=None):
+        captured.update(url=url, json=json)
+        return _Resp(0)
+
+    monkeypatch.setattr(licensing.httpx, "post", fake_post)
+    licensing.verify_remote("http://s")
+    assert captured["url"] == "http://s/api/v1/license/verify"
+    assert captured["json"] == {"sn": SN, "mac": MAC}
+
+
+def test_verify_remote_revoked_by_code3_clears_credential(monkeypatch):
+    """后台解绑/换绑 → 服务器回 3 → 清凭证（下次启动走激活页）。"""
+    _save_ok()
+    monkeypatch.setattr(licensing.httpx, "post", lambda *a, **k: _Resp(3))
+    d = licensing.verify_remote("http://s")
+    assert d["checked"] is True and d["ok"] is False
+    assert "其他设备" in d["reason"]
+    assert not licensing.LICENSE_PATH.exists()       # 凭证被清
+
+
+def test_verify_remote_revoked_by_code2(monkeypatch):
+    _save_ok()
+    monkeypatch.setattr(licensing.httpx, "post", lambda *a, **k: _Resp(2))
+    d = licensing.verify_remote("http://s")
+    assert d["ok"] is False and "失效" in d["reason"]
+    assert not licensing.LICENSE_PATH.exists()
+
+
+def test_verify_remote_offline_tolerant(monkeypatch):
+    """服务器不可达 → 离线宽容：不清凭证、放行（离线也能用）。"""
+    _save_ok()
+
+    def boom(*a, **k):
+        raise licensing.httpx.ConnectError("no net")
+
+    monkeypatch.setattr(licensing.httpx, "post", boom)
+    d = licensing.verify_remote("http://s")
+    assert d == {"checked": False, "ok": True, "reason": "服务器不可达，离线放行"}
+    assert licensing.LICENSE_PATH.exists()
+
+
+def test_verify_remote_old_server_404_tolerant(monkeypatch):
+    """老服务器没有 /verify（HTTP 404）→ 不吊销（升级期兼容）。"""
+    _save_ok()
+
+    class _404(_Resp):
+        def __init__(self):
+            super().__init__(0)
+            self.status_code = 404
+
+    monkeypatch.setattr(licensing.httpx, "post", lambda *a, **k: _404())
+    d = licensing.verify_remote("http://s")
+    assert d["checked"] is False and d["ok"] is True
+    assert licensing.LICENSE_PATH.exists()
+
+
+def test_verify_remote_rate_limited_not_revoked(monkeypatch):
+    """429 是限流不是吊销 → 离线放行，凭证保留。"""
+    _save_ok()
+    monkeypatch.setattr(licensing.httpx, "post", lambda *a, **k: _Resp(429))
+    d = licensing.verify_remote("http://s")
+    assert d["checked"] is False and d["ok"] is True
+    assert licensing.LICENSE_PATH.exists()
+
+
+def test_verify_remote_no_credential(monkeypatch):
+    monkeypatch.setattr(licensing.httpx, "post",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("不该发请求")))
+    d = licensing.verify_remote("http://s")
+    assert d == {"checked": False, "ok": False, "reason": "未激活"}

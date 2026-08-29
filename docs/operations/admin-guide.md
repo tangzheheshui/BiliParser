@@ -1,12 +1,15 @@
 # 授权服务：产物与地址
 
-服务器：`193.112.26.217:7900`（激活接口由客户端内置，无需手输）
+正式域名：`tangzheheshui.cn/biliparser`（域名根路径留给以后的个人主页；
+nginx 80 反代 → 127.0.0.1:7900，应用按 `URL_PREFIX=/biliparser` 剥前缀，2026-08-29 起）。
+旧地址 `193.112.26.217:7900` 仍直连可用——**7900 端口不能关**，
+已发出的老客户端激活地址烧的是它。
 
 | 产物 | 地址 |
 |---|---|
-| 管理后台（取码 / 退回 / 解绑） | http://193.112.26.217:7900/admin |
-| 官网下载页（mac dmg / win exe） | http://193.112.26.217:7900/download |
-| 安装包直链 | http://193.112.26.217:7900/download/BiliParser-macOS.dmg |
+| 官网（介绍 + 截图 + 下载） | http://tangzheheshui.cn/biliparser |
+| 管理后台（取码 / 退回 / 解绑） | http://tangzheheshui.cn/biliparser/admin |
+| 官网下载页（mac dmg / win exe） | http://tangzheheshui.cn/biliparser/download |
 
 ## 后台三句话
 

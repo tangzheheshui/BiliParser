@@ -4,75 +4,121 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>BiliParser — B 站视频 AI 智能总结</title>
+<meta name="description" content="把 B 站视频链接贴进来，自动提取字幕，AI 一键生成一句话总结、核心要点、章节时间线与思维导图。支持 macOS / Windows。">
 <style>
 :root{--bg:#101418;--panel:#171d24;--panel2:#1d2530;--line:#2a3542;--text:#dce4ee;--dim:#8b98a8;--accent:#4da3ff;--accent2:#7ec8ff}
 *{box-sizing:border-box;margin:0;padding:0}
-body{background:var(--bg);color:var(--text);font:15px/1.7 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;min-height:100vh;background-image:radial-gradient(800px 400px at 50% -100px,rgba(77,163,255,.12),transparent)}
-.wrap{max-width:720px;margin:0 auto;padding:72px 24px 40px;text-align:center}
-.logo{font-size:56px;line-height:1;margin-bottom:14px;background:linear-gradient(135deg,#4da3ff,#7ec8ff);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
-h1{font-size:34px;font-weight:700;letter-spacing:.5px}
-.tag{color:var(--dim);font-size:16px;margin-top:8px}
-.ver{color:var(--dim);font-size:13px;margin-top:14px;min-height:20px}
-.dl{display:flex;gap:16px;margin:44px 0;flex-wrap:wrap}
-.dl a{flex:1;min-width:230px;display:block;padding:22px 18px;border:1px solid var(--line);border-radius:16px;text-decoration:none;color:var(--text);background:var(--panel);transition:.15s}
-.dl a:hover{border-color:var(--accent);transform:translateY(-2px)}
-.dl a.hot{border-color:var(--accent);box-shadow:0 0 0 3px rgba(77,163,255,.15);background:rgba(77,163,255,.06)}
-.dl .os{font-size:19px;font-weight:600}
-.dl .os small{color:var(--accent2);font-weight:400;font-size:12px;margin-left:6px}
-.dl .fname{color:var(--dim);font-size:12px;font-family:ui-monospace,Menlo,Consolas,monospace;margin-top:6px}
-.dl .note{color:var(--dim);font-size:12px;margin-top:6px}
-.feats{text-align:left;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:24px 28px;margin-top:12px}
-.feats h2{font-size:15px;margin-bottom:12px;color:var(--accent2)}
-.feats li{list-style:none;padding:5px 0;color:var(--dim);font-size:14px}
-.feats li::before{content:"· ";color:var(--accent)}
-footer{color:var(--dim);font-size:12px;margin-top:48px;opacity:.75}
+body{background:var(--bg);color:var(--text);font:15px/1.75 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;min-height:100vh;background-image:radial-gradient(900px 420px at 50% -120px,rgba(77,163,255,.13),transparent)}
+
+/* ---------- 顶行：品牌贴左上、下载贴右上（通栏） ---------- */
+.head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:22px 34px}
+.wrap{max-width:860px;margin:0 auto;padding:8px 24px 64px}
+.brand{font-size:19px;font-weight:700;letter-spacing:.3px}
+.brand .star{background:linear-gradient(135deg,#4da3ff,#7ec8ff);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;margin-right:2px}
+.dl{display:flex;gap:8px}
+.dl a{display:inline-flex;align-items:center;padding:8px 18px;border:1px solid var(--line);border-radius:10px;text-decoration:none;color:var(--text);font-size:13.5px;font-weight:600;background:var(--panel);transition:.15s}
+.dl a:hover{border-color:var(--accent);transform:translateY(-1px)}
+.dl a.hot{border-color:var(--accent);box-shadow:0 0 0 3px rgba(77,163,255,.13)}
+.dl a small{color:var(--dim);font-weight:400;font-size:11px;margin-left:5px}
+
+/* ---------- 简介（主） ---------- */
+.hero{text-align:center;padding:48px 0 8px}
+h1{font-size:33px;font-weight:700;letter-spacing:.5px}
+.pitch{color:var(--dim);font-size:15px;max-width:600px;margin:16px auto 0}
+.pitch b{color:var(--text);font-weight:600}
+.osline{color:var(--dim);font-size:13px;margin-top:14px}
+.osline b{color:var(--accent2);font-weight:600}
+
+/* ---------- 截图 ---------- */
+.sect{margin-top:44px}
+.sect>h2{text-align:center;font-size:18px;font-weight:600;margin-bottom:18px}
+.shot{border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:0 24px 60px -24px rgba(0,0,0,.6);background:var(--panel)}
+.shot img{display:block;width:100%;height:auto}
+
+/* ---------- 功能 ---------- */
+.feats{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.feat{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+.feat .ic{font-size:20px;margin-bottom:6px}
+.feat b{display:block;font-size:14.5px;font-weight:600;margin-bottom:3px}
+.feat span{color:var(--dim);font-size:13px;line-height:1.6}
+
+/* ---------- 三步 ---------- */
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;counter-reset:step}
+.step{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px;position:relative}
+.step::before{counter-increment:step;content:counter(step);position:absolute;top:14px;right:16px;font-size:26px;font-weight:700;color:var(--line)}
+.step b{display:block;font-size:14.5px;font-weight:600;margin-bottom:3px}
+.step span{color:var(--dim);font-size:13px;line-height:1.6}
+.note{text-align:center;color:var(--dim);font-size:12px;margin-top:18px;opacity:.8}
+
+@media (max-width:640px){
+  .feats,.steps{grid-template-columns:1fr 1fr}
+  h1{font-size:25px}
+  .head{padding:16px 20px}
+  .dl a{padding:7px 14px;font-size:12.5px}
+  .brand{font-size:17px}
+}
 </style>
 </head>
 <body>
-<div class="wrap">
-  <div class="logo">✦</div>
-  <h1>BiliParser</h1>
-  <p class="tag">B 站视频 · AI 智能总结</p>
-  <p class="ver" id="ver">获取版本号…</p>
 
+<!-- 顶行：品牌左上 · 下载右上（通栏贴边） -->
+<div class="head">
+  <div class="brand"><span class="star">✦</span>BiliParser</div>
   <div class="dl">
-    <a href="/download/BiliParser-macOS.dmg" id="dl-mac">
-      <div class="os">macOS <small id="mac-tag"></small></div>
-      <div class="fname">BiliParser-macOS.dmg</div>
-      <div class="note">下载后拖入「应用程序」</div>
-    </a>
-    <a href="/download/BiliParser-Setup-Windows.exe" id="dl-win">
-      <div class="os">Windows <small id="win-tag"></small></div>
-      <div class="fname">BiliParser-Setup-Windows.exe</div>
-      <div class="note">双击安装，无需管理员</div>
-    </a>
+    <a href="download/BiliParser-macOS.dmg" id="dl-mac">macOS <small>.dmg</small></a>
+    <a href="download/BiliParser-Setup-Windows.exe" id="dl-win">Windows <small>.exe</small></a>
   </div>
+</div>
 
-  <div class="feats">
-    <h2>功能</h2>
-    <li>一键提取 B 站视频字幕（UP 上传 + AI 字幕）</li>
-    <li>AI 生成结构化总结：一句话 / 核心要点 / 章节时间线 / 关键词</li>
-    <li>思维导图随总结自动生成，可导出</li>
-    <li>支持智谱 GLM / DeepSeek 自有 Key 直连</li>
-  </div>
+<div class="wrap">
 
-  <footer>激活码由卖家提供 · 一码通用 · 桌面与网页版共享</footer>
+  <!-- 简介 -->
+  <section class="hero">
+    <h1>B 站视频，AI 一键总结</h1>
+    <p class="pitch">把视频链接贴进来，自动提取字幕，AI 按你选的场景模板生成
+      <b>一句话总结、核心要点、章节时间线、关键词</b>，并自动产出可导出的思维导图。
+      论文速读、课程复习、追科技测评，长视频十分钟变两分钟。</p>
+    <p class="osline">支持 <b>macOS</b> 与 <b>Windows</b> · 智谱 GLM / DeepSeek 自有 Key 直连</p>
+  </section>
+
+  <!-- 实际界面 -->
+  <section class="sect">
+    <div class="shot">
+      <img src="assets/app.jpg" alt="BiliParser 实际界面：工作台" width="1600" height="1034">
+    </div>
+  </section>
+
+  <!-- 能干什么 -->
+  <section class="sect">
+    <h2>能干什么</h2>
+    <div class="feats">
+      <div class="feat"><div class="ic">🎯</div><b>一键提取字幕</b><span>UP 上传字幕、AI 生成字幕都能抓，无需登录 B 站账号</span></div>
+      <div class="feat"><div class="ic">📋</div><b>场景模板</b><span>论文速读 / 课程复习 / 会议纪要 / 科技测评…按场景定制总结</span></div>
+      <div class="feat"><div class="ic">📝</div><b>结构化总结</b><span>一句话总结、核心要点、章节时间线、关键词，一目了然</span></div>
+      <div class="feat"><div class="ic">🧠</div><b>思维导图</b><span>总结生成后自动产出，支持导出，复习回顾更省事</span></div>
+      <div class="feat"><div class="ic">🔑</div><b>自有 Key 直连</b><span>智谱 GLM、DeepSeek 填自己的 API Key，模型自己选</span></div>
+      <div class="feat"><div class="ic">⚡</div><b>一码一机</b><span>激活码绑定一台电脑，每次启动自动核验，离线也能用</span></div>
+    </div>
+  </section>
+
+  <!-- 怎么用 -->
+  <section class="sect">
+    <h2>怎么用</h2>
+    <div class="steps">
+      <div class="step"><b>下载安装</b><span>点上方对应系统的按钮：macOS 拖入「应用程序」，Windows 双击即装</span></div>
+      <div class="step"><b>输入激活码</b><span>首次打开输入卖家提供的激活码，一码绑定一台电脑</span></div>
+      <div class="step"><b>贴链接出总结</b><span>复制 B 站视频链接贴进输入框，选好模板，等几十秒拿结果</span></div>
+    </div>
+    <p class="note">macOS 首次打开若提示「无法验证开发者」，右键图标 → 打开 · 换电脑可联系卖家解绑</p>
+  </section>
+
 </div>
 <script>
 (function(){
-  // 自动高亮访客系统
-  var ua = navigator.userAgent, isMac = /Mac|iPhone|iPad/i.test(ua);
-  var macEl = document.getElementById('dl-mac'), winEl = document.getElementById('dl-win');
-  if (isMac) { macEl.classList.add('hot'); document.getElementById('mac-tag').textContent='（你的系统）'; }
-  else { winEl.classList.add('hot'); document.getElementById('win-tag').textContent='（你的系统）'; }
-  // 读版本号（sync 脚本生成的 version.json）
-  fetch('/download/version.json')
-    .then(function(r){ return r.ok ? r.json() : null; })
-    .then(function(d){
-      if (d && d.version) document.getElementById('ver').textContent = '最新版本 ' + d.version + ' · 更新于 ' + d.updated;
-      else document.getElementById('ver').textContent = '';
-    })
-    .catch(function(){ document.getElementById('ver').textContent = ''; });
+  var ua=navigator.userAgent,isMac=/Mac|iPhone|iPad/i.test(ua);
+  var macEl=document.getElementById('dl-mac'),winEl=document.getElementById('dl-win');
+  if(isMac){macEl.classList.add('hot');macEl.querySelector('small').textContent='（你的系统）';}
+  else{winEl.classList.add('hot');winEl.querySelector('small').textContent='（你的系统）';}
 })();
 </script>
 </body>

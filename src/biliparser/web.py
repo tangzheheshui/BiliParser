@@ -642,6 +642,24 @@ def make_server(cfg, port: int) -> ThreadingHTTPServer:
     return ThreadingHTTPServer(("127.0.0.1", port), Handler)
 
 
+def _startup_verify(cfg) -> None:
+    """发行版每次启动联网核验（2026-08-29 用户拍板：后台解绑要能踢掉老设备）。
+
+    码被后台解绑/已换绑 → verify_remote 清凭证，激活门随即拦下；
+    服务器不可达/老服务器无此接口 → 离线宽容放行（保住「离线也能用」）。
+    直连自用版（未烧服务器地址）跳过。desktop.main 与 web.main 启动时各调一次。
+    """
+    if not cfg.managed_server:
+        return
+    if not licensing.verify_local()["ok"]:
+        return                                   # 本来就没激活，直接走激活页
+    r = licensing.verify_remote(cfg.managed_server)
+    if r["checked"] and not r["ok"]:
+        print(f"授权已失效：{r['reason']}，请重新激活", flush=True)
+    elif not r["checked"] and r.get("reason"):
+        print(f"启动核验：{r['reason']}", flush=True)
+
+
 def main(argv: list[str] | None = None) -> int:
     import argparse
 
@@ -650,6 +668,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     cfg = config.load_config()  # 允许缺配置：页面能打开，状态区会提示缺什么
+    _startup_verify(cfg)
     server = make_server(cfg, args.port)
     print(f"BiliParser 工作台：http://127.0.0.1:{args.port}")
     print("配置：", json.dumps(api_status(cfg), ensure_ascii=False))

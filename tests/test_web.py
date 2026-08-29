@@ -303,6 +303,54 @@ def test_gate_off_for_direct_build(server):
     assert status == 400
 
 
+# ---------- 启动联网核验（每次启动；后台解绑后老设备失效） ----------
+
+def test_startup_verify_revoked_kicks_device(monkeypatch, tmp_path):
+    """后台解绑 → 启动核验判 3 → 清凭证：老设备下次启动被踢回激活页。"""
+    monkeypatch.setattr(licensing, "verify_local", lambda: {"ok": True})
+    monkeypatch.setattr(licensing, "LICENSE_PATH", tmp_path / "lic.json")
+    licensing._save("ABCD-1234-EFGH-5678", "AABBCCDDEEFF", "t", "x" * 64)
+    calls = {}
+
+    def fake_remote(url):
+        calls["url"] = url
+        licensing.clear_credential()               # 真实 verify_remote 吊销时清凭证
+        return {"checked": True, "ok": False, "reason": "该激活码已在其他设备使用"}
+
+    monkeypatch.setattr(licensing, "verify_remote", fake_remote)
+
+    class _Cfg:
+        managed_server = "http://tangzheheshui.cn/biliparser"
+
+    web._startup_verify(_Cfg())
+    assert calls["url"].endswith("/biliparser")
+    assert not (tmp_path / "lic.json").exists()     # 凭证被清 → 激活门拦下
+
+
+def test_startup_verify_offline_tolerant_and_direct_skipped(monkeypatch):
+    """服务器不可达 → 放行；直连自用版（无服务器）→ 压根不联网。"""
+    monkeypatch.setattr(licensing, "verify_local", lambda: {"ok": True})
+
+    def no_net(_url):
+        raise AssertionError("直连版不应联网核验")
+
+    monkeypatch.setattr(licensing, "verify_remote", no_net)
+
+    class _Direct:
+        managed_server = ""
+
+    web._startup_verify(_Direct())                 # 不抛 = 通过
+
+    monkeypatch.setattr(licensing, "verify_remote",
+                        lambda url: {"checked": False, "ok": True,
+                                     "reason": "服务器不可达，离线放行"})
+
+    class _Managed:
+        managed_server = "http://s"
+
+    web._startup_verify(_Managed())                # 不抛 = 通过
+
+
 # ---------- 烧入文件读取（frozen 布局漂移回归）+ 更新提示 ----------
 
 def test_bundled_text_finds_mirror_layout(monkeypatch, tmp_path):

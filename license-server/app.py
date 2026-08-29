@@ -2,6 +2,7 @@
 
 按 docs/requirements/服务器需求文档.md v2.2 实现（Flask + SQLite，框架沿用旧版）：
 - POST /api/v1/license/activate        客户端激活（匿名，每 IP 每分钟 60 次限流）
+- POST /api/v1/license/verify          客户端每次启动核验（解绑/换绑后老设备失效）
 - POST /api/v1/admin/login             管理员登录（ADMIN_PASSWORD → 7 天 Token）
 - POST /api/v1/admin/codes/take        取码发货（FIFO，原子，自动补货）
 - POST /api/v1/admin/codes/{sn}/return 退回（仅已发货未激活）
@@ -9,7 +10,8 @@
 - GET  /admin                          单页管理后台
 
 约定：所有业务响应 HTTP 状态码统一 200，业务结果放 body.code。
-激活后客户端永久离线（本地 HMAC 验签），服务器不具备远程吊销能力（有意取舍）。
+激活凭证本地 HMAC 验签（离线可用）；客户端每次启动调 /verify 联网核验，
+码被解绑/换绑后老设备下次启动即失效；服务器不可达时客户端离线宽容放行。
 """
 
 import hashlib
@@ -26,7 +28,7 @@ from datetime import datetime, timedelta
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 
-from flask import Flask, jsonify, redirect, request, send_file, send_from_directory
+from flask import Flask, jsonify, redirect, request, send_file, send_from_directory, url_for
 
 from db import connect
 
@@ -62,6 +64,19 @@ def _setup_logger() -> logging.Logger:
 
 
 log = _setup_logger()
+
+
+def _client_ip() -> str:
+    """真实客户端 IP（限流用）：直连 7900 就是 remote_addr；
+    走 nginx 反代时 remote_addr 恒为 127.0.0.1，取 X-Forwarded-For
+    末段（nginx $proxy_add_x_forwarded_for 追加的真实对端，客户端伪造不了）。
+    """
+    ra = request.remote_addr or ""
+    if ra in ("127.0.0.1", "::1"):
+        xff = request.headers.get("X-Forwarded-For", "")
+        if xff:
+            return xff.split(",")[-1].strip()
+    return ra
 
 
 def _now() -> str:
@@ -199,7 +214,7 @@ def create_app(db_path: str | None = None,
         body = request.get_json(silent=True) or {}
         sn_raw = body.get("sn")
         mac_raw = body.get("mac")
-        ip = request.remote_addr or ""
+        ip = _client_ip()
 
         # NFR-03 限流：每 IP 每分钟 ≤ 60 次（滑动窗口）
         now = time.monotonic()
@@ -275,6 +290,42 @@ def create_app(db_path: str | None = None,
                 db().commit()
         except sqlite3.Error:  # 日志失败不阻断业务
             log.exception("activate_logs 写入失败")
+
+    # ---------- 启动核验（每次启动，远程吊销的落点） ----------
+
+    @app.post("/api/v1/license/verify")
+    def license_verify():
+        """客户端每次启动上报 {sn, mac}：
+        绑定匹配 → code 0；解绑后（bound_mac 清空）或已换绑 → code 3（客户端清凭证）；
+        码不存在 → code 2。限流与 activate 共桶（启动频率远低于阈值）。
+        """
+        body = request.get_json(silent=True) or {}
+        sn_raw, mac_raw = body.get("sn"), body.get("mac")
+        ip = _client_ip()
+
+        now = time.monotonic()
+        q = _rate[ip]
+        while q and now - q[0] > ACTIVATE_RATE_WINDOW:
+            q.popleft()
+        if len(q) >= ACTIVATE_RATE_LIMIT:
+            return fail(429, "请求过于频繁，请稍后再试")
+        q.append(now)
+
+        sn = normalize_sn(sn_raw)
+        mac = normalize_mac(str(mac_raw or ""))
+        if not sn or not mac:
+            return fail(4, "参数错误：sn 或 MAC 为空/格式非法")
+
+        row = db().execute(
+            "SELECT * FROM license_codes WHERE sn=?", (sn,)
+        ).fetchone()
+        if not row:
+            log.info("verify deny sn=%s mac=%s（码不存在）", sn, mac)
+            return fail(2, "无效激活码")
+        if row["bound_mac"] != mac:                     # 含解绑后的 NULL
+            log.info("verify deny sn=%s mac=%s（绑定 %s）", sn, mac, row["bound_mac"])
+            return fail(3, "设备不匹配：该激活码未绑定当前设备")
+        return ok({"sn": sn}, "验证通过")
 
     # ---------- 管理员鉴权 ----------
 
@@ -447,25 +498,50 @@ def create_app(db_path: str | None = None,
     @app.get("/")
     def root_page():
         """根路径 → 下载页（客户端品牌名点这里）。"""
-        return redirect("/download")
+        return redirect(url_for("download_page"))
 
     @app.get("/site")
     @app.get("/site/")
     @app.get("/site/<path:fname>")
     def site(fname: str = "index.html"):
         """旧地址兼容：/site 系列一律转去 /download。"""
-        return redirect("/download")
+        return redirect(url_for("download_page"))
 
     @app.get("/download")
-    @app.get("/download/")
     def download_page():
-        """下载页（原 /site）：内容在 static-site/，文件仍在 /download/<fname>。"""
+        """下载页（原 /site）：内容在 static-site/，文件在 /download/<fname>。
+        只留无斜杠路由：页面内链接全是相对路径，带斜杠访问会 308 到这里。"""
         return send_from_directory(HERE / "static-site", "index.html")
+
+    @app.get("/download/")
+    def download_page_slash():
+        return redirect(url_for("download_page"), 308)
 
     @app.get("/download/<path:fname>")
     def download(fname: str):
         """安装包下发（send_from_directory 自带路径穿越防护）。"""
         return send_from_directory(HERE / "downloads", fname)
+
+    @app.get("/assets/<path:fname>")
+    def assets(fname: str):
+        """官网静态资源（截图等，static-site/assets/）。"""
+        return send_from_directory(HERE / "static-site" / "assets", fname)
+
+    # 挂子目录部署（tangzheheshui.cn/biliparser）：剥前缀 + 设 SCRIPT_NAME，
+    # url_for/redirect 自动带前缀；页面内部链接全用相对路径，两种部署通吃。
+    # URL_PREFIX 未设置时零行为——裸 IP:7900 直连（老客户端烧的激活地址）不变。
+    prefix = (os.environ.get("URL_PREFIX") or "").rstrip("/")
+    if prefix:
+        _wsgi = app.wsgi_app
+
+        def _prefixed(environ, start_response):
+            path = environ.get("PATH_INFO", "")
+            if path == prefix or path.startswith(prefix + "/"):
+                environ["SCRIPT_NAME"] = prefix
+                environ["PATH_INFO"] = path[len(prefix):] or "/"
+            return _wsgi(environ, start_response)
+
+        app.wsgi_app = _prefixed
 
     return app
 

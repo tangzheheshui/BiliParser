@@ -31,6 +31,8 @@ def main(argv: list[str] | None = None) -> int:
         config.update_config({"managed.server_url": args.server.rstrip("/")})
     cfg = config.load_config()
 
+    web._startup_verify(cfg)   # 发行版每次启动联网核验（解绑/换绑后老设备失效）
+
     port = args.port or _free_port()
     server = web.make_server(cfg, port)
     threading.Thread(target=server.serve_forever, daemon=True).start()

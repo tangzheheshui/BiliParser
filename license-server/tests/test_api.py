@@ -344,3 +344,48 @@ def test_activate_dashless_sn(server, admin):
     d = server.post("/api/v1/license/activate",
                     json={"mac": MAC_A_RAW, "sn": sn.replace("-", "")}).get_json()
     assert d["code"] == 0 and d["data"]["sn"] == sn
+
+
+# ---------- 启动核验 verify（远程吊销的落点） ----------
+
+def _verify(server, sn, mac):
+    return server.post("/api/v1/license/verify",
+                       json={"sn": sn, "mac": mac}).get_json()
+
+
+def test_verify_ok_while_bound(server, admin):
+    sn = _take(server, admin)
+    _activate(server, sn)
+    assert _verify(server, sn, MAC_A_RAW)["code"] == 0
+
+
+def test_verify_after_unbind_denied(server, admin):
+    """解绑后老设备核验 → 3：远程吊销生效（用户拍板：每次启动都要校验）。"""
+    sn = _take(server, admin)
+    _activate(server, sn)
+    d = server.post(f"/api/v1/admin/codes/{sn}/unbind", headers=admin).get_json()
+    assert d["code"] == 0
+    assert _verify(server, sn, MAC_A_RAW)["code"] == 3
+
+
+def test_verify_after_rebind_old_device_denied(server, admin):
+    """解绑换新设备后：老设备 3、新设备 0。"""
+    sn = _take(server, admin)
+    _activate(server, sn)
+    server.post(f"/api/v1/admin/codes/{sn}/unbind", headers=admin)
+    assert _activate(server, sn, MAC_B_RAW).get_json()["code"] == 0
+    assert _verify(server, sn, MAC_A_RAW)["code"] == 3
+    assert _verify(server, sn, MAC_B_RAW)["code"] == 0
+
+
+def test_verify_error_codes(server):
+    assert _verify(server, "XXXX-YYYY-ZZZZ-1234", MAC_A_RAW)["code"] == 2  # 不存在
+    assert _verify(server, "", MAC_A_RAW)["code"] == 4                    # sn 空
+    assert _verify(server, "XXXX", "zz")["code"] == 4                     # MAC 非法
+
+
+def test_verify_rate_limit_shared_with_activate(server):
+    """verify 与 activate 共限流桶：激活打满 60 次后 verify 也 429。"""
+    for _ in range(60):
+        _activate(server, "SN-NOT-EXIST")
+    assert _verify(server, "SN-NOT-EXIST", MAC_A_RAW)["code"] == 429
