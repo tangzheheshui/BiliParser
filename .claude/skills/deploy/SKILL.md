@@ -1,6 +1,6 @@
 ---
 name: deploy
-description: 部署 BiliParser 授权服务器（license-server/，v2：激活码库存池 + 一次性激活）到 Linux VPS——上传代码、装依赖、配密钥、systemd 常驻、Caddy HTTPS（可选）、安装包上架。当用户说「部署」「上线」「换服务器」「发布到 VPS」或 /deploy 时使用。
+description: 部署 BiliParser 授权服务器（license-server/，v2：激活码库存池 + 一次性激活）到 Linux VPS——上传代码、装依赖、配密钥、systemd 常驻、nginx + certbot 子域 HTTPS（可选）、安装包上架。当用户说「部署」「上线」「换服务器」「发布到 VPS」或 /deploy 时使用。
 ---
 
 # 部署授权服务器（license-server/，v2）
@@ -59,7 +59,7 @@ EOF
 
 ## 4. systemd 常驻
 
-绑定地址：路线 A 用 `-b 0.0.0.0:7900`；路线 B 改 `-b 127.0.0.1:7900`（HTTPS 由 Caddy 终结）。
+绑定地址：路线 A 用 `-b 0.0.0.0:7900`；路线 B 改 `-b 127.0.0.1:7900`（HTTPS 由 nginx 终结）。
 
 ```bash
 ssh "$SERVER" 'sudo tee /etc/systemd/system/biliparser-license.service >/dev/null' <<'EOF'
@@ -96,20 +96,33 @@ ssh "$SERVER" 'curl -s 127.0.0.1:7900/api/v1/license/activate -X POST -H "Conten
    `ssh -L 7900:127.0.0.1:7900 user@<IP>` 后浏览器开 `http://127.0.0.1:7900/admin`
    输 `ADMIN_PASSWORD` 登录
 
-## 5b. 路线 B：域名 + HTTPS（Caddy）
+## 5b. 路线 B：子域 + HTTPS（nginx + certbot）
 
-先装 Caddy（官方源），然后只需两行：
+域名规范：**每个产品一个子域**（`xxx.tangzheheshui.cn`，根路径只放个人主页），
+与同服的 MahjongHelper 同一套模式。四步：
 
 ```bash
-ssh "$SERVER" 'sudo tee /etc/caddy/Caddyfile >/dev/null' <<EOF
-<域名> {
-    reverse_proxy 127.0.0.1:7900
+# 1) DNS：控制台加 A 记录 biliparser → 服务器公网 IP（用户动手）
+# 2) nginx 80 站点（ACME webroot + 反代）
+ssh "$SERVER" 'sudo tee /etc/nginx/sites-available/biliparser >/dev/null' <<'EOF'
+server {
+    listen 80;
+    server_name biliparser.tangzheheshui.cn;
+    location /.well-known/acme-challenge/ { root /var/www/certbot; }
+    location / { proxy_pass http://127.0.0.1:7900; proxy_set_header Host $host; }
 }
 EOF
-ssh "$SERVER" 'sudo systemctl reload caddy'
+ssh "$SERVER" 'sudo ln -sf /etc/nginx/sites-available/biliparser /etc/nginx/sites-enabled/ && sudo mkdir -p /var/www/certbot && sudo nginx -t && sudo systemctl reload nginx'
+# 3) 签证书
+ssh "$SERVER" 'sudo certbot certonly --webroot -w /var/www/certbot -d biliparser.tangzheheshui.cn'
+# 4) 升级 443：server_name 不变，加 443 块（80 块改 301 跳 https），reload
 ```
 
-完成即 `https://<域名>/admin`（输密码登录）。
+443 块里证书路径 `/etc/letsencrypt/live/biliparser.tangzheheshui.cn/`，
+`proxy_pass http://127.0.0.1:7900;`。**不设 URL_PREFIX**——子域挂根路径，
+应用零改造。certbot 自动装续期定时任务，不用再管。
+
+完成即 `https://biliparser.tangzheheshui.cn/admin`（输密码登录）。
 
 ## 6.（可选）官网与安装包分发
 
@@ -128,7 +141,7 @@ SERVER="$SERVER" bash packaging/sync-to-server.sh local    # 或用本机 dist/
 ```
 
 同步后用户可见：
-- 官网：`https://<域名>/biliparser/download`（下载按钮自动高亮访客系统、显示最新版本号）
+- 官网：`https://biliparser.tangzheheshui.cn/download`（下载按钮自动高亮访客系统、显示最新版本号）
 - 路线 A（裸 IP）同理：`http://<IP>:7900/download`
 
 ## 收尾

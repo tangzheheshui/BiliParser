@@ -320,10 +320,10 @@ def test_startup_verify_revoked_kicks_device(monkeypatch, tmp_path):
     monkeypatch.setattr(licensing, "verify_remote", fake_remote)
 
     class _Cfg:
-        managed_server = "http://tangzheheshui.cn/biliparser"
+        managed_server = "https://biliparser.tangzheheshui.cn"
 
     web._startup_verify(_Cfg())
-    assert calls["url"].endswith("/biliparser")
+    assert calls["url"] == "https://biliparser.tangzheheshui.cn"
     assert not (tmp_path / "lic.json").exists()     # 凭证被清 → 激活门拦下
 
 

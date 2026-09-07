@@ -24,7 +24,7 @@ from pathlib import Path
 import httpx
 
 LICENSE_PATH = Path.home() / ".biliparser" / "license.json"
-OFFICIAL_SITE = "http://tangzheheshui.cn/biliparser"   # 品牌名点击跳转的官网（固定字符串，改这里）
+OFFICIAL_SITE = "https://biliparser.tangzheheshui.cn"   # 品牌名点击跳转的官网（固定字符串，改这里）
 
 
 class LicensingError(Exception):

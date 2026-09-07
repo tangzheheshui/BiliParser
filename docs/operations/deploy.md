@@ -14,7 +14,7 @@
 | 路线 | 场景 | 入口 | 代价 |
 |---|---|---|
 | **A 境内裸 IP + 高位端口** | 想立刻上线、无域名 | `http://IP:7900` | 明文 HTTP |
-| **B 域名 + HTTPS（Caddy）** | 有域名 | `https://lic.example.com` | 境内须先 ICP 备案 |
+| **B 子域 + HTTPS（nginx + certbot）** | 有域名 | `https://biliparser.tangzheheshui.cn` | 境内服务器须先 ICP 备案（现用境外节点规避） |
 
 ## 环境变量（/etc/biliparser-license.env，权限 600）
 
@@ -49,7 +49,7 @@
 
 打包时烧入（`packaging/build-macos.sh <server_url> <sign_key>`）：
 
-- `_dist_server.txt`：激活服务器地址（如 `http://IP:7900`）
+- `_dist_server.txt`：激活服务器地址（如 `https://biliparser.tangzheheshui.cn`）
 - `_sign_key.txt`：与服务器 `LICENSE_SIGN_KEY` 完全一致的签名密钥
 
 开发调试可用环境变量覆盖：`BILIPARSER_LICENSE_SERVER` / `BILIPARSER_SIGN_KEY`。

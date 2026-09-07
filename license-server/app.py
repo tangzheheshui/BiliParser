@@ -527,9 +527,10 @@ def create_app(db_path: str | None = None,
         """官网静态资源（截图等，static-site/assets/）。"""
         return send_from_directory(HERE / "static-site" / "assets", fname)
 
-    # 挂子目录部署（tangzheheshui.cn/biliparser）：剥前缀 + 设 SCRIPT_NAME，
+    # 可选能力：挂子目录部署（URL_PREFIX=/xxx）时剥前缀 + 设 SCRIPT_NAME，
     # url_for/redirect 自动带前缀；页面内部链接全用相对路径，两种部署通吃。
-    # URL_PREFIX 未设置时零行为——裸 IP:7900 直连（老客户端烧的激活地址）不变。
+    # 正式部署是独立子域 biliparser.tangzheheshui.cn 根路径（2026-09-07 起），
+    # URL_PREFIX 不设 → 此处零行为；裸 IP:7900 直连（老客户端烧的激活地址）不变。
     prefix = (os.environ.get("URL_PREFIX") or "").rstrip("/")
     if prefix:
         _wsgi = app.wsgi_app
