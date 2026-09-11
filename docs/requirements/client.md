@@ -233,7 +233,9 @@ hosted.py，v2 删网页版时丢失，2026-08-25 补回本地客户端）：
   `_MEIPASS`、Contents/{Resources,Frameworks}/biliparser 全试一遍；
   build 脚本打完包往两处各塞一份双保险
 - **版本单一来源**：`__init__.__version__`（0.2.1 起），spec 的 Info.plist 与
-  下载页 version.json 都由它生成，杜绝两处手写对不上
+  下载页 version.json 都由它生成，杜绝两处手写对不上。`pyproject.toml` 因
+  uv_build 不支持 dynamic version 只能写死，由 `tests/test_version_sync.py`
+  兜底校验两处一致（2026-09-11 补齐：此前 pyproject 停在 0.2.2、真源已 0.2.5）
 - **启动更新提示**：`GET /api/update-check` 后端代抓官网 version.json 比对
   （避免跨域），前端左栏横幅「新版本 x 可用 → 去下载」；服务器挂了静默。
   已装出去的旧版无法自升级，用户手动换新；激活凭证在 `~/.biliparser/`，
