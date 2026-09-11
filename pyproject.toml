@@ -2,7 +2,7 @@
 name = "biliparser"
 # uv_build 不支持 dynamic version，只能写死；真源是 src/biliparser/__init__.py:__version__，
 # 由 tests/test_version_sync.py 兜底校验两处一致（bump 时别只改一处）。
-version = "0.2.5"
+version = "0.2.6"
 description = "BiliParser — B 站视频字幕提取与 AI 总结 CLI"
 readme = "README.md"
 authors = [
