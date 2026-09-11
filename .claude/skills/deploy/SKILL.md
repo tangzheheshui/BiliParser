@@ -23,18 +23,32 @@ v2 无 AI 代理、无网页版托管，依赖只有 flask。本机用 ssh / rsy
 
 ```bash
 rsync -av --exclude=.venv --exclude=__pycache__ --exclude='*.db' --exclude=downloads \
-  license-server/ "$SERVER":/opt/biliparser-license/
+  license-server/ "$SERVER":/opt/BiliParser/license-server/
 # Windows 开发机没有 rsync 时用 scp：
-# scp -r license-server "$SERVER":/opt/biliparser-license
+# scp -r license-server "$SERVER":/opt/BiliParser/license-server
 ```
 
 注意：**别覆盖服务器上已有的 `licenses.db`**（那是卖出去的码）。
 rsync 带 `--exclude='*.db'` 已防误删；若是换服务器迁移，单独把旧库拷过去。
 
+**路径就认 `/opt/BiliParser/license-server/`（现行部署）。** 服务器上 `/opt/BiliParser`
+是一个 git clone，部署方式是 rsync 直接盖进工作区，所以服务器上 `git status` 永远是
+脏的——**这是预期的，别去 clean/checkout 它**，那会把线上代码回退成旧提交。
+
+### 两个历史包袱，别踩
+
+- `/opt/biliparser-license/`（注意没有大写和前一层）是 **v1 遗留目录**，2026-08-20/21
+  那批文件，库是 v1 表结构（`licenses` / `prompts` / `usage` / `user_secrets` /
+  `web_sessions`，**根本没有 `license_codes` 表**）。现行服务不读它。别往里部署，
+  也别误把它当生产库——真正的码在 `/opt/BiliParser/license-server/licenses.db`。
+  确认无用后可以整个删掉。
+- `biliparser-web.service` 是 v1 的网页版托管，早已 `inactive` + `disabled`
+  （`hosted.py` 在 v2 就删了）。**别 enable 它**，起来也是 ModuleNotFoundError。
+
 ## 2. 装依赖（服务器上）
 
 ```bash
-ssh "$SERVER" 'cd /opt/biliparser-license && python3 -m venv .venv && .venv/bin/pip install flask gunicorn'
+ssh "$SERVER" 'cd /opt/BiliParser/license-server && python3 -m venv .venv && .venv/bin/pip install flask gunicorn'
 ```
 
 ## 3. 配密钥（环境变量，别进代码库）
@@ -50,7 +64,7 @@ python3 -c "import secrets; print(secrets.token_urlsafe(9))"  # ADMIN_PASSWORD�
 ssh "$SERVER" 'sudo tee /etc/biliparser-license.env >/dev/null && sudo chmod 600 /etc/biliparser-license.env' <<'EOF'
 LICENSE_SIGN_KEY=<与客户端一致的签名密钥>
 ADMIN_PASSWORD=<管理后台登录密码>
-LICENSE_DB=/opt/biliparser-license/licenses.db
+LICENSE_DB=/opt/BiliParser/license-server/licenses.db
 EOF
 ```
 
@@ -68,9 +82,9 @@ Description=BiliParser license server
 After=network.target
 
 [Service]
-WorkingDirectory=/opt/biliparser-license
+WorkingDirectory=/opt/BiliParser/license-server
 EnvironmentFile=/etc/biliparser-license.env
-ExecStart=/opt/biliparser-license/.venv/bin/gunicorn -w 2 -b 0.0.0.0:7900 app:create_app()
+ExecStart=/opt/BiliParser/license-server/.venv/bin/gunicorn -w 4 -t 300 -b 0.0.0.0:7900 "app:create_app()"
 Restart=always
 
 [Install]
@@ -86,12 +100,14 @@ ssh "$SERVER" 'sudo systemctl enable --now biliparser-license'
 ssh "$SERVER" 'curl -s 127.0.0.1:7900/api/v1/license/activate -X POST -H "Content-Type: application/json" -d "{}"'
 ```
 
-注意：SQLite + 多 worker 并发写没问题（写入量极小），gunicorn 用 `-w 2` 即可。
+注意：SQLite + 多 worker 并发写没问题（写入量极小），`-w 4 -t 300` 是线上跑了很久的配置，
+照抄即可。`-t`（worker 超时）对判码/发码这种快接口其实无关紧要，配大只是留余量，
+v2 没有 AI 代理这类长请求，不用为它调。
 
 ## 5a. 路线 A：境内裸 IP（无域名）
 
 1. 让用户去云控制台安全组放行 `TCP 7900`（高位端口避开 80/443/8080）
-2. 验证：`curl http://<IP>:7900/site` 返回官网页
+2. 验证：`curl http://<IP>:7900/download` 返回官网下载页（旧 `/site` 302 过来）
 3. 管理后台别明文过公网，让用户本地走 SSH 隧道：
    `ssh -L 7900:127.0.0.1:7900 user@<IP>` 后浏览器开 `http://127.0.0.1:7900/admin`
    输 `ADMIN_PASSWORD` 登录
@@ -126,14 +142,16 @@ ssh "$SERVER" 'sudo certbot certonly --webroot -w /var/www/certbot -d biliparser
 
 ## 6.（可选）官网与安装包分发
 
-`/site` 是官网下载页（`static-site/`），`/download/<文件>` 下发安装包
-（`downloads/` 目录，不入 git）。客户端底部「官网」链接指向这里。
+`/download` 是官网下载页（`static-site/`；旧 `/site` 302 过来），`/download/<文件>`
+下发安装包（`downloads/` 目录，不入 git）。客户端底部「官网」链接指向服务根地址。
 
 上架安装包：
 
 ```bash
 # Windows 包只能由 CI 构建：打 tag 触发（.github/workflows/release.yml）
-git tag v0.2.0 && git push origin v0.2.0     # CI 出 Release
+# tag 名要与 src/biliparser/__init__.py 的 __version__ 一致（pyproject.toml 也同步，
+# tests/test_version_sync.py 兜底校验），否则包名/更新提示会对不上
+git tag v0.2.6 && git push origin v0.2.6     # CI 出 Release
 
 # 把产物搬到服务器（mac 包本机也能出：bash packaging/build-macos.sh <server_url> <sign_key>）
 SERVER="$SERVER" bash packaging/sync-to-server.sh          # 从 Release 拉
