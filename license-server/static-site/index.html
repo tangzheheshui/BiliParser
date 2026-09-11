@@ -15,11 +15,15 @@ body{background:var(--bg);color:var(--text);font:15px/1.75 -apple-system,"PingFa
 .wrap{max-width:860px;margin:0 auto;padding:8px 24px 64px}
 .brand{font-size:19px;font-weight:700;letter-spacing:.3px}
 .brand .star{background:linear-gradient(135deg,#4da3ff,#7ec8ff);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;margin-right:2px}
-.dl{display:flex;gap:8px}
+.dl{display:flex;flex-direction:column;align-items:flex-end;gap:7px}
+.dl-btns{display:flex;gap:8px}
 .dl a{display:inline-flex;align-items:center;padding:8px 18px;border:1px solid var(--line);border-radius:10px;text-decoration:none;color:var(--text);font-size:13.5px;font-weight:600;background:var(--panel);transition:.15s}
 .dl a:hover{border-color:var(--accent);transform:translateY(-1px)}
 .dl a.hot{border-color:var(--accent);box-shadow:0 0 0 3px rgba(77,163,255,.13)}
 .dl a small{color:var(--dim);font-weight:400;font-size:11px;margin-left:5px}
+/* 最新版本：由 /download/version.json 渲染（与客户端更新提示同一份清单） */
+.ver{color:var(--dim);font-size:12px;letter-spacing:.2px}
+.ver b{color:var(--accent2);font-weight:600}
 
 /* ---------- 简介（主） ---------- */
 .hero{text-align:center;padding:48px 0 8px}
@@ -65,8 +69,11 @@ h1{font-size:33px;font-weight:700;letter-spacing:.5px}
 <div class="head">
   <div class="brand"><span class="star">✦</span>BiliParser</div>
   <div class="dl">
-    <a href="download/BiliParser-macOS.dmg" id="dl-mac">macOS <small>.dmg</small></a>
-    <a href="download/BiliParser-Setup-Windows.exe" id="dl-win">Windows <small>.exe</small></a>
+    <div class="dl-btns">
+      <a href="download/BiliParser-macOS.dmg" id="dl-mac">macOS <small>.dmg</small></a>
+      <a href="download/BiliParser-Setup-Windows.exe" id="dl-win">Windows <small>.exe</small></a>
+    </div>
+    <div class="ver" id="ver" hidden></div>
   </div>
 </div>
 
@@ -119,6 +126,21 @@ h1{font-size:33px;font-weight:700;letter-spacing:.5px}
   var macEl=document.getElementById('dl-mac'),winEl=document.getElementById('dl-win');
   if(isMac){macEl.classList.add('hot');macEl.querySelector('small').textContent='（你的系统）';}
   else{winEl.classList.add('hot');winEl.querySelector('small').textContent='（你的系统）';}
+
+  // 最新版本：读 /download/version.json（= 客户端更新提示用的那份清单）。
+  // 页面地址是 /download（无尾斜杠），相对路径 download/x 解析为 /download/x。
+  // 拿不到就整行不显示——版本信息永远不阻塞下载。
+  fetch('download/version.json',{cache:'no-store'})
+    .then(function(r){return r.ok?r.json():null})
+    .then(function(d){
+      if(!d||!d.version)return;
+      var el=document.getElementById('ver');
+      el.textContent='最新版 ';
+      var b=document.createElement('b');b.textContent='v'+d.version;el.appendChild(b);
+      if(d.updated)el.appendChild(document.createTextNode(' · 更新于 '+d.updated));
+      el.hidden=false;
+    })
+    .catch(function(){});
 })();
 </script>
 </body>

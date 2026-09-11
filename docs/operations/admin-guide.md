@@ -34,7 +34,10 @@ nginx + certbot 模式；nginx 80/443 反代 → 127.0.0.1:7900，http 自动 30
 ## 上架
 
 新版安装包重命名后放到服务器 `/opt/BiliParser/license-server/downloads/`
-（即 `/download/BiliParser-macOS.dmg`），下载页自动可用。
+（即 `/download/BiliParser-macOS.dmg`），下载页自动可用。**下载页显示的版本号
+来自同目录的 `version.json`**（走 `packaging/sync-to-server.sh` 会一并生成并同步）；
+只手工塞安装包、不更新它，页面会一直显示旧版本。注意 `updated` 记的是**同步当天**
+的日期，不是该 tag 的发布日。
 
 ## 备份（重要）
 

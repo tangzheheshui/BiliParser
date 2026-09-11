@@ -73,9 +73,11 @@ BILIPARSER_SIGN_KEY=dev-sign-key-change-me uv run biliparse-web   # 客户端同
 
 ## 官网与安装包分发
 
-`/site` 是官网下载页（`static-site/`），`/download/<文件>` 下发安装包
-（`downloads/` 目录，不入 git）。客户端底部「官网」链接固定指向
-`http://<服务器>/site`。
+`/download` 是官网下载页（`static-site/`；旧 `/site` 302 过来），`/download/<文件>`
+下发安装包（`downloads/` 目录，不入 git）。页面在下载按钮下露出「最新版 vX ·
+更新于 Y」，数据取自 `/download/version.json`——与客户端启动更新提示读的是**同一份
+清单**（`sync-to-server.sh` 随包生成），版本信息不做第二处手写。清单缺失/取不到时
+该行整行不显示，不影响下载。客户端「官网」链接固定指向 `OFFICIAL_SITE` 根地址。
 
 ## 已知边界 / 后续
 

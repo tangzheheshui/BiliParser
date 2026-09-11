@@ -259,6 +259,16 @@ def test_download_page_addresses(server):
     r = server.get("/")
 
 
+def test_download_page_shows_latest_version(server):
+    """下载页要露出「最新版 vX · 更新于 Y」：页面预留 #ver 槽位，数据源是
+    download/version.json——与客户端 /api/update-check 读的是同一份清单，
+    随 sync-to-server.sh 一起发布，故版本信息不会两处对不上。
+    只锚页面本身：downloads/ 是未跟踪目录，CI 全新克隆时不存在。"""
+    html = server.get("/download").get_data(as_text=True)
+    assert 'id="ver"' in html
+    assert "download/version.json" in html
+
+
 def test_unbind_allows_reactivation(server, admin):
     """售后解绑：已激活的码解绑后清掉旧 MAC，可换新设备重新激活。"""
     sn = _take(server, admin)
