@@ -1,10 +1,11 @@
 # 授权服务：产物与地址
 
-正式域名：`biliparser.tangzheheshui.cn`（独立子域，与 MahjongHelper 同一套
-nginx + certbot 模式；nginx 443 反代 → 127.0.0.1:7900，应用挂根路径）。
+正式域名：`biliparser.tangzheheshui.cn`（独立子域，2026-09-07 起，与 MahjongHelper 同一套
+nginx + certbot 模式；nginx 80/443 反代 → 127.0.0.1:7900，http 自动 301 https，应用挂根路径）。
 域名规范：**每个产品一个子域**（`xxx.tangzheheshui.cn`），根路径只放个人主页。
 旧地址 `193.112.26.217:7900` 仍直连可用——**7900 端口不能关**，
-已发出的老客户端激活地址烧的是它。
+≤0.2.4 老客户端激活地址烧的是它。0.2.5 烧的 `tangzheheshui.cn/biliparser` 已失效
+（nginx 不再挂该前缀），0.2.6 起烧新域名。
 
 | 产物 | 地址 |
 |---|---|
